@@ -3,7 +3,7 @@ using MongoDB.Bson.Serialization.Attributes;
 
 namespace Muhasebe.Models
 {
-    public class CariRecord
+    public class Merchant
     {
         [BsonId]
         [BsonRepresentation(BsonType.ObjectId)]
@@ -14,6 +14,6 @@ namespace Muhasebe.Models
         public decimal Bakiye { get; set; }
 
         [BsonDateTimeOptions(Kind = DateTimeKind.Local)]
-        public DateTime OlusturmaTarihi { get; set; } = DateTime.UtcNow;
+        public DateTime Date { get; set; } = DateTime.UtcNow;
     }
 }
