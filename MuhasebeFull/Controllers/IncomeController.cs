@@ -65,7 +65,6 @@ public class IncomesController : ControllerBase
             description = incomeReq.description,
             amount = incomeReq.amount,
             userId = currentUser.id
-            // Diğer gerekli özellikler...
         };
 
         _incomeCollection.InsertOne(income);
