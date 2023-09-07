@@ -10,8 +10,7 @@ namespace Muhasebe.Models
         [BsonRepresentation(BsonType.ObjectId)]
         public string id { get; set; }
 
-        [BsonRepresentation(BsonType.ObjectId)]
-        public string userId     { get; set; }
+        public string userId    { get; set; }
 
         public string type { get; set; }
 

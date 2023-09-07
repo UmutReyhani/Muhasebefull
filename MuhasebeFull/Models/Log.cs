@@ -15,7 +15,7 @@ namespace Muhasebe.Models
 
         public string actionType { get; set; }
 
-        public string targetModel { get; set; }
+        public string target { get; set; }
 
         public string? itemId { get; set; }
 

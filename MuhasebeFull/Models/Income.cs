@@ -12,6 +12,7 @@ namespace MuhasebeFull.Models
 
         public string title { get; set; }
 
+        [BsonRepresentation(BsonType.Decimal128)]
         public decimal amount { get; set; }
 
         public string description { get; set; }

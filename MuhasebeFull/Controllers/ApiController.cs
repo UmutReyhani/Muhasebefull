@@ -8,6 +8,7 @@ using MongoDB.Driver.Linq;
 using MuhasebeFull.Models;
 using MongoDB.Bson;
 using System.ComponentModel.DataAnnotations;
+using MongoDB.Bson.Serialization.Attributes;
 
 namespace Muhasebe.Controllers
 {
@@ -131,7 +132,6 @@ namespace Muhasebe.Controllers
         {
             [Required]
             public string id { get; set; }
-            [Required]
             public string password { get; set; }
         }
         public class _updateUserRes
@@ -157,7 +157,7 @@ namespace Muhasebe.Controllers
 
             if (currentUser.role == "User")
             {
-                if (currentUser.id != userToBeUpdated.id)
+                if (currentUser.id != data.id)
                 {
                     return Unauthorized("Sadece kendi şifrenizi güncelleyebilirsiniz.");
                 }
@@ -168,7 +168,7 @@ namespace Muhasebe.Controllers
                 userToBeUpdated.password = ComputeSha256Hash(data.password);
             }
 
-            _userCollection.ReplaceOne(u => u.id == data.id, userToBeUpdated);
+            _userCollection.ReplaceOne(u => u.id == currentUser.id, userToBeUpdated);
 
             var newValue = JsonSerializer.Serialize(userToBeUpdated);
 
@@ -176,7 +176,7 @@ namespace Muhasebe.Controllers
             {
                 userId = currentUser.id,
                 actionType = "Update",
-                targetModel = "User",
+                target = "User",
                 itemId = userToBeUpdated.id,
                 oldValue = oldValue,
                 newValue = newValue,
@@ -190,31 +190,45 @@ namespace Muhasebe.Controllers
         #endregion
 
         #region DeleteUser
-        [HttpDelete("deleteuser/{id:length(24)}"), CheckRoleAttribute]
-        public IActionResult DeleteUser(string id)
+
+        public class _deleteUserReq
+        {
+            [Required]
+            public string id { get; set; }
+        }
+
+        public class _deleteUserRes
+        {
+            [Required]
+            public string type { get; set; } // success / error 
+            public string message { get; set; }
+        }
+
+        [HttpPost("deleteuser"), CheckRoleAttribute]
+        public ActionResult<_deleteUserRes> DeleteUser([FromBody] _deleteUserReq data)
         {
             var currentUser = GetCurrentUserFromSession();
 
-            var userToDelete = _userCollection.Find<User>(u => u.id == id).FirstOrDefault();
+            var userToDelete = _userCollection.Find<User>(u => u.id == data.id).FirstOrDefault();
             if (userToDelete == null)
             {
-                return NotFound("Kullanıcı bulunamadı.");
+                return NotFound(new _deleteUserRes { type = "error", message = "Kullanıcı bulunamadı." });
             }
 
             if (currentUser.role == "User" && currentUser.id != userToDelete.id)
             {
-                return Unauthorized("Sadece kendi hesabınızı silebilirsiniz.");
+                return Unauthorized(new _deleteUserRes { type = "error", message = "Sadece kendi hesabınızı silebilirsiniz." });
             }
 
             var oldValue = JsonSerializer.Serialize(userToDelete);
 
-            _userCollection.DeleteOne(u => u.id == id);
+            _userCollection.DeleteOne(u => u.id == data.id);
 
             Log log = new Log
             {
                 userId = currentUser.id,
                 actionType = "Delete",
-                targetModel = "User",
+                target = "User",
                 itemId = userToDelete.id,
                 oldValue = oldValue,
                 newValue = null,
@@ -222,7 +236,7 @@ namespace Muhasebe.Controllers
             };
             _logCollection.InsertOne(log);
 
-            return Ok(new { Message = "Kullanıcı başarıyla silindi." });
+            return Ok(new _deleteUserRes { type = "success", message = "Kullanıcı başarıyla silindi." });
         }
 
         #endregion
@@ -282,12 +296,13 @@ namespace Muhasebe.Controllers
         }
         #endregion
 
-        #region Userstatus
+        #region Userstatus Update
 
         public class _userstatusReq
         {
             [Required]
-            public string Id { get; set; }
+            public string id { get; set; }
+            public string status { get; set; }
         }
 
         public class _userstatusRes
@@ -306,22 +321,27 @@ namespace Muhasebe.Controllers
                 return Unauthorized(new _userstatusRes { type = "error", message = "Bu işlemi gerçekleştirmek için yetkiniz yok." });
             }
 
-            var userToBeUpdated = _userCollection.Find<User>(u => u.id == statusData.Id).FirstOrDefault();
+            var userToBeUpdated = _userCollection.Find<User>(u => u.id == statusData.id).FirstOrDefault();
             if (userToBeUpdated == null)
             {
                 return NotFound(new _userstatusRes { type = "error", message = "Durumu değiştirilmek istenen kullanıcı bulunamadı." });
             }
 
+            if (statusData.status != userToBeUpdated.status)
+            {
+                return BadRequest(new _userstatusRes { type = "error", message = "Girilen statü, kullanıcının mevcut statüsü ile eşleşmiyor." });
+            }
+
             var oldValue = userToBeUpdated.status;
 
             userToBeUpdated.status = userToBeUpdated.status == "Active" ? "Passive" : "Active";
-            _userCollection.ReplaceOne(u => u.id == statusData.Id, userToBeUpdated);
+            _userCollection.ReplaceOne(u => u.id == statusData.id, userToBeUpdated);
 
             Log log = new Log
             {
                 userId = currentUser.id,
                 actionType = "Update",
-                targetModel = "User",
+                target = "User",
                 itemId = userToBeUpdated.id,
                 oldValue = oldValue,
                 newValue = userToBeUpdated.status,
@@ -334,26 +354,38 @@ namespace Muhasebe.Controllers
 
         #endregion
 
+        #region AccountingADD
 
-        #region Accounting ADD
+        public class AddAccountingRecordReq
+        {
+            public string type { get; set; }
+            [BsonRepresentation(BsonType.Decimal128)]
+            public decimal amount { get; set; }
+            public string currency { get; set; }
+
+        }
+
+        public class AddAccountingRecordRes
+        {
+            public string type { get; set; } = "success";
+            public string message { get; set; }
+        }
+
         [HttpPost("add-record"), CheckRoleAttribute]
-        public IActionResult AddAccountingRecord([FromBody] Accounting record)
+        public IActionResult AddAccountingRecord([FromBody] AddAccountingRecordReq recordReq)
         {
             var currentUser = GetCurrentUserFromSession();
 
-            if (string.IsNullOrEmpty(record.type) || (record.type != "Gelir" && record.type != "Gider"))
-                return BadRequest(new { Message = "Type sadece 'Gelir' ya da 'Gider' olabilir." });
+            if (string.IsNullOrEmpty(recordReq.type) || (recordReq.type != "Gelir" && recordReq.type != "Gider"))
+                return BadRequest(new AddAccountingRecordRes { type = "error", message = "Type sadece 'Gelir' ya da 'Gider' olabilir." });
 
-            record.userId = currentUser.id;
-            record.date = DateTime.Now;
-
-            //boş olabilirler
-            if (string.IsNullOrEmpty(record.incomeId))
-                record.incomeId = null;
-            if (string.IsNullOrEmpty(record.merchantId))
-                record.merchantId = null;
-            if (string.IsNullOrEmpty(record.fixedExpensesId))
-                record.fixedExpensesId = null;
+            Accounting record = new Accounting
+            {
+                type = recordReq.type,
+                userId = currentUser.id,
+                date = DateTime.Now,
+                amount = recordReq.amount,
+            };
 
             _accountingCollection.InsertOne(record);
 
@@ -361,20 +393,19 @@ namespace Muhasebe.Controllers
             {
                 userId = currentUser.id,
                 actionType = "Add",
-                targetModel = "Accounting",
+                target = "Accounting",
                 itemId = record.id,
                 newValue = JsonSerializer.Serialize(record),
                 date = DateTime.UtcNow
             };
             _logCollection.InsertOne(log);
 
-            return Ok(new { Message = "Finansal kayıt oluşturuldu." });
+            return Ok(new AddAccountingRecordRes { message = "Finansal kayıt oluşturuldu." });
         }
-
 
         #endregion
 
-        #region Accounting Get Record
+        #region AccountingGetRecord
         [HttpGet("get-records"), CheckRoleAttribute]
         public async Task<IActionResult> GetAccountingRecords()
         {
@@ -400,27 +431,41 @@ namespace Muhasebe.Controllers
         }
         #endregion
 
-        #region Accounting Update Record
+        #region AccountingUpdateRecord
+
+        public class UpdateAccountingRecordReq
+        {
+            public string type { get; set; }
+            [BsonRepresentation(BsonType.Decimal128)]
+            public decimal amount { get; set; }
+            public string currency { get; set; }
+        }
+
+        public class UpdateAccountingRecordRes
+        {
+            public string type { get; set; } = "success";
+            public string message { get; set; }
+        }
+
         [HttpPost("update-record"), CheckRoleAttribute]
-        public async Task<IActionResult> UpdateRecord([FromBody] Accounting updatedRecord)
+        public async Task<IActionResult> UpdateRecord([FromBody] UpdateAccountingRecordReq updateReq)
         {
             var currentUser = GetCurrentUserFromSession();
-
-            var existingRecord = await _accountingCollection.Find<Accounting>(r => r.id == updatedRecord.id).FirstOrDefaultAsync();
+            var existingRecord = await _accountingCollection.Find<Accounting>(r => r.id == currentUser.id).FirstOrDefaultAsync();
 
             if (existingRecord == null)
-                return NotFound("Güncellenmek istenen finansal kayıt bulunamadı.");
+                return NotFound(new UpdateAccountingRecordRes { type = "error", message = "Güncellenmek istenen finansal kayıt bulunamadı." });
 
             if (currentUser.role != "Admin" && existingRecord.userId != currentUser.id)
-                return Unauthorized("Bu kaydı güncellemek için yetkiniz bulunmamaktadır.");
+                return Unauthorized(new UpdateAccountingRecordRes { type = "error", message = "Bu kaydı güncellemek için yetkiniz bulunmamaktadır." });
 
             string oldValue = JsonSerializer.Serialize(existingRecord);
 
-            existingRecord.amount = updatedRecord.amount;
-            existingRecord.currency = updatedRecord.currency;
-            existingRecord.type = updatedRecord.type;
+            existingRecord.amount = updateReq.amount;
+            existingRecord.currency = updateReq.currency;
+            existingRecord.type = updateReq.type;
 
-            await _accountingCollection.ReplaceOneAsync(r => r.id == updatedRecord.id, existingRecord);
+            await _accountingCollection.ReplaceOneAsync(r => r.id == currentUser.id, existingRecord);
 
             string newValue = JsonSerializer.Serialize(existingRecord);
 
@@ -428,7 +473,7 @@ namespace Muhasebe.Controllers
             {
                 userId = currentUser.id,
                 actionType = "Update",
-                targetModel = "Accounting",
+                target = "Accounting",
                 itemId = existingRecord.id,
                 oldValue = oldValue,
                 newValue = newValue,
@@ -436,43 +481,56 @@ namespace Muhasebe.Controllers
             };
             _logCollection.InsertOne(log);
 
-            return Ok(new { Message = "Finansal kayıt başarıyla güncellendi." });
+            return Ok(new UpdateAccountingRecordRes { message = "Finansal kayıt başarıyla güncellendi." });
         }
-
 
         #endregion
 
-        #region Accounting Delete Record
-        [HttpDelete("delete-record/{id}"), CheckRoleAttribute]
-        public async Task<IActionResult> DeleteRecord(string id)
+        #region Accounting DeleteRecord
+
+        public class _deleteRecordReq
+        {
+            [Required]
+            public string id { get; set; }
+        }
+
+        public class _deleteRecordRes
+        {
+            [Required]
+            public string type { get; set; } // success / error 
+            public string message { get; set; }
+        }
+
+        [HttpPost("delete-record"), CheckRoleAttribute]
+        public async Task<ActionResult<_deleteRecordRes>> DeleteRecord([FromBody] _deleteRecordReq data)
         {
             var currentUser = GetCurrentUserFromSession();
 
-            var existingRecord = await _accountingCollection.Find<Accounting>(r => r.id == id).FirstOrDefaultAsync();
+            var existingRecord = await _accountingCollection.Find<Accounting>(r => r.id == data.id).FirstOrDefaultAsync();
 
             if (existingRecord == null)
-                return NotFound("Silmek istenen finansal kayıt bulunamadı.");
+                return NotFound(new _deleteRecordRes { type = "error", message = "Silmek istenen finansal kayıt bulunamadı." });
 
             if (currentUser.role != "Admin" && existingRecord.userId != currentUser.id)
-                return Unauthorized("Bu kaydı silmek için yetkiniz bulunmamaktadır.");
+                return Unauthorized(new _deleteRecordRes { type = "error", message = "Bu kaydı silmek için yetkiniz bulunmamaktadır." });
 
             string oldValue = JsonSerializer.Serialize(existingRecord);
 
-            await _accountingCollection.DeleteOneAsync(r => r.id == id);
+            await _accountingCollection.DeleteOneAsync(r => r.id == data.id);
 
             Log log = new Log
             {
                 userId = currentUser.id,
-                actionType = "Delete Accounting Record",
-                targetModel = "Accounting",
-                itemId = id,
+                actionType = "Delete",
+                target = "Accounting",
+                itemId = data.id,
                 oldValue = oldValue,
                 newValue = null,
                 date = DateTime.UtcNow
             };
             _logCollection.InsertOne(log);
 
-            return Ok(new { Message = "Finansal kayıt başarıyla silindi." });
+            return Ok(new _deleteRecordRes { type = "success", message = "Finansal kayıt başarıyla silindi." });
         }
 
         #endregion
@@ -542,18 +600,40 @@ namespace Muhasebe.Controllers
 
         #endregion
 
-        #region Create Fixed Expenses
+        #region FixedExpensesAdd
+
+        public class AddFixedExpensesReq
+        {
+            public string title { get; set; }
+            public string? description { get; set; }
+            [BsonRepresentation(BsonType.Decimal128)]
+            public decimal amount { get; set; }
+        }
+
+        public class AddFixedExpensesRes
+        {
+            public string type { get; set; } = "success";
+            public string message { get; set; }
+        }
+
         [HttpPost("add-fixed-expenses"), CheckRoleAttribute]
-        public IActionResult AddFixedExpenses([FromBody] FixedExpenses expenses)
+        public IActionResult AddFixedExpenses([FromBody] AddFixedExpensesReq expensesReq)
         {
             var currentUser = GetCurrentUserFromSession();
 
-            expenses.userId = currentUser.id;
+            FixedExpenses expenses = new FixedExpenses
+            {
+                title = expensesReq.title,
+                description = expensesReq.description,
+                amount = expensesReq.amount,
+                userId = currentUser.id
+            };
 
             _fixedExpensesCollection.InsertOne(expenses);
 
-            return Ok(new { Message = "Sabit gider kaydı başarıyla oluşturuldu." });
+            return Ok(new AddFixedExpensesRes { message = "Sabit gider kaydı başarıyla oluşturuldu." });
         }
+
         #endregion
 
         #region Get Fixed Expenses
@@ -579,82 +659,157 @@ namespace Muhasebe.Controllers
         }
         #endregion
 
-        #region Update Fixed Expenses
+        #region UpdateFixedExpenses
+
+        public class UpdateFixedExpensesReq
+        {
+            public string title { get; set; }
+            public string? description { get; set; }
+            [BsonRepresentation(BsonType.Decimal128)]
+            public decimal amount { get; set; }
+        }
+
+        public class UpdateFixedExpensesRes
+        {
+            public string type { get; set; } = "success";
+            public string message { get; set; }
+        }
+
         [HttpPost("update-fixed-expenses"), CheckRoleAttribute]
-        public async Task<IActionResult> UpdateFixedExpenses([FromBody] FixedExpenses expenses)
+        public async Task<IActionResult> UpdateFixedExpenses([FromBody] UpdateFixedExpensesReq expensesReq)
         {
             var currentUser = GetCurrentUserFromSession();
 
-            var existingExpense = await _fixedExpensesCollection.Find<FixedExpenses>(expense => expense.id == expenses.id).FirstOrDefaultAsync();
+            var existingExpense = await _fixedExpensesCollection.Find<FixedExpenses>(expense => expense.id == currentUser.id).FirstOrDefaultAsync();
             if (existingExpense == null)
-                return NotFound("Gider bulunamadı.");
+                return NotFound(new UpdateFixedExpensesRes { type = "error", message = "Gider bulunamadı." });
 
             if (currentUser.role != "Admin" && existingExpense.userId != currentUser.id)
-                return Unauthorized("Bu gideri güncelleme yetkiniz yok.");
+                return Unauthorized(new UpdateFixedExpensesRes { type = "error", message = "Bu gideri güncelleme yetkiniz yok." });
 
-            _fixedExpensesCollection.ReplaceOne(expense => expense.id == expenses.id, expenses);
+            FixedExpenses updatedExpense = existingExpense;
+            updatedExpense.title = expensesReq.title;
+            updatedExpense.description = expensesReq.description;
+            updatedExpense.amount = expensesReq.amount;
 
-            return Ok(new { Message = "Sabit gider kaydı başarıyla güncellendi." });
+            await _fixedExpensesCollection.ReplaceOneAsync(expense => expense.id == updatedExpense.id, updatedExpense);
+
+            return Ok(new UpdateFixedExpensesRes { message = "Sabit gider kaydı başarıyla güncellendi." });
         }
+
         #endregion
 
-        #region Delete Fixed Expenses
-        [HttpDelete("delete-fixed-expenses/{id}"), CheckRoleAttribute]
-        public async Task<IActionResult> DeleteFixedExpenses(string id)
+
+        #region DeleteFixedExpenses
+
+        public class _deleteFixedExpenseReq
+        {
+            [Required]
+            public string id { get; set; }
+        }
+
+        public class _deleteFixedExpenseRes
+        {
+            [Required]
+            public string type { get; set; } // success / error 
+            public string message { get; set; }
+        }
+
+        [HttpPost("delete-fixed-expenses"), CheckRoleAttribute]
+        public async Task<ActionResult<_deleteFixedExpenseRes>> DeleteFixedExpenses([FromBody] _deleteFixedExpenseReq data)
         {
             var currentUser = GetCurrentUserFromSession();
 
-            var existingExpense = await _fixedExpensesCollection.Find<FixedExpenses>(expense => expense.id == id).FirstOrDefaultAsync();
+            var existingExpense = await _fixedExpensesCollection.Find<FixedExpenses>(expense => expense.id == data.id).FirstOrDefaultAsync();
             if (existingExpense == null)
-                return NotFound("Gider bulunamadı.");
+                return NotFound(new _deleteFixedExpenseRes { type = "error", message = "Gider bulunamadı." });
 
             if (currentUser.role != "Admin" && existingExpense.userId != currentUser.id)
-                return Unauthorized("Bu gideri silme yetkiniz yok.");
+                return Unauthorized(new _deleteFixedExpenseRes { type = "error", message = "Bu gideri silme yetkiniz yok." });
 
-            _fixedExpensesCollection.DeleteOne(expense => expense.id == id);
+            _fixedExpensesCollection.DeleteOne(expense => expense.id == data.id);
 
-            return Ok(new { Message = "Sabit gider kaydı başarıyla silindi." });
+            return Ok(new _deleteFixedExpenseRes { type = "success", message = "Sabit gider kaydı başarıyla silindi." });
         }
+
         #endregion
 
-        #region Add Income
+        #region IncomeAdd
+
+        public class AddIncomeReq
+        {
+            public string title { get; set; }
+            public string? description { get; set; }
+            [BsonRepresentation(BsonType.Decimal128)]
+            public decimal amount { get; set; }
+        }
+
+        public class AddIncomeRes
+        {
+            public string type { get; set; } = "success";
+            public string message { get; set; }
+        }
+
         [HttpPost("add-income"), CheckRoleAttribute]
-        public IActionResult AddIncome([FromBody] Income income)
+        public IActionResult AddIncome([FromBody] AddIncomeReq incomeReq)
         {
             var currentUser = GetCurrentUserFromSession();
 
-            income.userId = currentUser.id;
+            Income income = new Income
+            {
+                title = incomeReq.title,
+                description = incomeReq.description,
+                amount = incomeReq.amount,
+                userId = currentUser.id
+                // Diğer gerekli özellikler...
+            };
+
             _incomeCollection.InsertOne(income);
-            return Ok(new { Message = "Gelir kaydı oluşturuldu." });
+
+            return Ok(new AddIncomeRes { message = "Gelir kaydı başarıyla oluşturuldu." });
         }
 
         #endregion
 
-        #region Update Income
+        #region UpdateIncome
+
+        public class UpdateIncomeReq
+        {
+            public string title { get; set; }
+            public string? description { get; set; }
+            public decimal amount { get; set; }
+        }
+
+        public class UpdateIncomeRes
+        {
+            public string type { get; set; } = "success";
+            public string message { get; set; }
+        }
+
         [HttpPost("update-income"), CheckRoleAttribute]
-        public async Task<IActionResult> UpdateIncome([FromBody] Income incomeToUpdate)
+        public async Task<IActionResult> UpdateIncome([FromBody] UpdateIncomeReq incomeReq)
         {
             var currentUser = GetCurrentUserFromSession();
 
             if (currentUser.role != "Admin")
             {
-                return Unauthorized("Bu işlemi gerçekleştirmek için yetkiniz yok.");
+                return Unauthorized(new UpdateIncomeRes { type = "error", message = "Bu işlemi gerçekleştirmek için yetkiniz yok." });
             }
 
-            var income = await _incomeCollection.Find<Income>(i => i.id == incomeToUpdate.id).FirstOrDefaultAsync();
+            var income = await _incomeCollection.Find<Income>(i => i.id == currentUser.id).FirstOrDefaultAsync();
 
             if (income == null)
             {
-                return NotFound("Güncellenmek istenen gelir kaydı bulunamadı.");
+                return NotFound(new UpdateIncomeRes { type = "error", message = "Güncellenmek istenen gelir kaydı bulunamadı." });
             }
 
-            income.title = incomeToUpdate.title;
-            income.amount = incomeToUpdate.amount;
-            income.description = incomeToUpdate.description;
+            income.title = incomeReq.title;
+            income.amount = incomeReq.amount;
+            income.description = incomeReq.description;
 
             await _incomeCollection.ReplaceOneAsync(i => i.id == income.id, income);
 
-            return Ok(new { Message = "Gelir kaydı güncellendi." });
+            return Ok(new UpdateIncomeRes { message = "Gelir kaydı başarıyla güncellendi." });
         }
 
         #endregion
@@ -679,70 +834,118 @@ namespace Muhasebe.Controllers
 
         #endregion
 
-        #region Delete Income 
+        #region DeleteIncome
+
+        public class _deleteIncomeReq
+        {
+            [Required]
+            public string incomeId { get; set; }
+        }
+
+        public class _deleteIncomeRes
+        {
+            [Required]
+            public string type { get; set; } // success / error 
+            public string message { get; set; }
+        }
+
         [HttpPost("delete-income"), CheckRoleAttribute]
-        public async Task<IActionResult> DeleteIncome([FromBody] string incomeId)
+        public async Task<ActionResult<_deleteIncomeRes>> DeleteIncome([FromBody] _deleteIncomeReq data)
         {
             var currentUser = GetCurrentUserFromSession();
 
             if (currentUser.role != "Admin")
             {
-                return Unauthorized("Bu işlemi gerçekleştirmek için yetkiniz yok.");
+                return Unauthorized(new _deleteIncomeRes { type = "error", message = "Bu işlemi gerçekleştirmek için yetkiniz yok." });
             }
 
-            var deleteResult = await _incomeCollection.DeleteOneAsync(i => i.id == incomeId);
+            var deleteResult = await _incomeCollection.DeleteOneAsync(i => i.id == data.incomeId);
 
             if (deleteResult.DeletedCount > 0)
             {
-                return Ok(new { Message = "Gelir kaydı silindi." });
+                return Ok(new _deleteIncomeRes { type = "success", message = "Gelir kaydı silindi." });
             }
 
-            return NotFound("Silmek istenen gelir kaydı bulunamadı.");
+            return NotFound(new _deleteIncomeRes { type = "error", message = "Silmek istenen gelir kaydı bulunamadı." });
         }
+
         #endregion
 
-        #region Add Merchant
+        #region AddMerchant
+
+        public class AddMerchantReq
+        {
+            public string title { get; set; }
+        }
+
+        public class AddMerchantRes
+        {
+            public string type { get; set; } = "success";
+            public string message { get; set; }
+        }
+
         [HttpPost("add-merchant"), CheckRoleAttribute]
-        public IActionResult AddMerchant([FromBody] Merchant merchant)
+        public IActionResult AddMerchant([FromBody] AddMerchantReq merchantReq)
         {
             var currentUser = GetCurrentUserFromSession();
-            if (currentUser == null)
-                return Unauthorized();
 
-            merchant.userId = currentUser.id;
-            merchant.date = DateTime.Now;
+            if (currentUser == null)
+                return Unauthorized(new AddMerchantRes { type = "error", message = "Yetkisiz erişim." });
+
+            Merchant merchant = new Merchant
+            {
+                title = merchantReq.title,
+                userId = currentUser.id,
+                date = DateTime.Now,
+            };
 
             _merchantCollection.InsertOne(merchant);
-            return Ok(new { Message = "cari kaydedildi." });
+
+            return Ok(new AddMerchantRes { message = "Cari kaydedildi." });
         }
+
         #endregion
 
-        #region Update Merchant
+
+        #region UpdateMerchant
+
+        public class UpdateMerchantReq
+        {
+            public string title { get; set; }
+        }
+
+        public class UpdateMerchantRes
+        {
+            public string type { get; set; } = "success";
+            public string message { get; set; }
+        }
+
         [HttpPost("update-merchant"), CheckRoleAttribute]
-        public async Task<IActionResult> UpdateMerchant([FromBody] Merchant merchantToUpdate)
+        public async Task<IActionResult> UpdateMerchant([FromBody] UpdateMerchantReq updateReq)
         {
             var currentUser = GetCurrentUserFromSession();
 
             if (currentUser.role != "Admin")
             {
-                return Unauthorized("Bu işlemi gerçekleştirmek için yetkiniz yok.");
+                return Unauthorized(new UpdateMerchantRes { type = "error", message = "Bu işlemi gerçekleştirmek için yetkiniz yok." });
             }
 
-            var merchant = await _merchantCollection.Find<Merchant>(m => m.id == merchantToUpdate.id).FirstOrDefaultAsync();
+            var merchant = await _merchantCollection.Find<Merchant>(m => m.id == currentUser.id).FirstOrDefaultAsync();
 
             if (merchant == null)
             {
-                return NotFound("Güncellenmek istenen cari bulunamadı.");
+                return NotFound(new UpdateMerchantRes { type = "error", message = "Güncellenmek istenen cari bulunamadı." });
             }
 
-            merchant.title = merchantToUpdate.title;
+            merchant.title = updateReq.title;
 
             await _merchantCollection.ReplaceOneAsync(m => m.id == merchant.id, merchant);
 
-            return Ok(new { Message = "cari bilgisi güncellendi." });
+            return Ok(new UpdateMerchantRes { message = "Cari bilgisi güncellendi." });
         }
 
         #endregion
+
 
         #region Get Merchant
         [HttpGet("get-merchant"), CheckRoleAttribute]
@@ -764,29 +967,41 @@ namespace Muhasebe.Controllers
 
         #endregion
 
-        #region Delete Merhant
+        #region DeleteMerchant
+
+        public class DeleteMerchantReq
+        {
+            public string merchantId { get; set; }
+        }
+
+        public class DeleteMerchantRes
+        {
+            public string type { get; set; } = "success";
+            public string message { get; set; }
+        }
+
         [HttpPost("delete-merchant"), CheckRoleAttribute]
-        public async Task<IActionResult> DeleteMerchant([FromBody] string merchantId)
+        public async Task<IActionResult> DeleteMerchant([FromBody] DeleteMerchantReq deleteReq)
         {
             var currentUser = GetCurrentUserFromSession();
 
             if (currentUser.role != "Admin")
             {
-                return Unauthorized("Bu işlemi gerçekleştirmek için yetkiniz yok.");
+                return Unauthorized(new DeleteMerchantRes { type = "error", message = "Bu işlemi gerçekleştirmek için yetkiniz yok." });
             }
 
-            var deleteResult = await _merchantCollection.DeleteOneAsync(m => m.id == merchantId);
+            var deleteResult = await _merchantCollection.DeleteOneAsync(m => m.id == deleteReq.merchantId);
 
             if (deleteResult.DeletedCount > 0)
             {
-                return Ok(new { Message = "Car kaydı silindi." });
+                return Ok(new DeleteMerchantRes { message = "Cari kaydı silindi." });
             }
 
-            return NotFound("Silmek istenen cari bulunamadı.");
+            return NotFound(new DeleteMerchantRes { type = "error", message = "Silmek istenen cari bulunamadı." });
         }
 
         #endregion
+
     }
 
 }
-
