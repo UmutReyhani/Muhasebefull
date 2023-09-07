@@ -8,25 +8,25 @@ namespace Muhasebe.Models
     {
         [BsonId]
         [BsonRepresentation(BsonType.ObjectId)]
-        public string Id { get; set; }
+        public string id { get; set; }
 
         [BsonRepresentation(BsonType.ObjectId)]
-        public string UserId { get; set; }
+        public string userId     { get; set; }
 
-        public string Type { get; set; }
+        public string type { get; set; }
 
         [BsonRepresentation(BsonType.Decimal128)]
-        public decimal Amount { get; set; }
-        public string Currency { get; set; }
-        public DateTime Date { get; set; }
+        public decimal amount { get; set; }
+        public string currency { get; set; }
+        public DateTime date { get; set; }
 
         [BsonRepresentation(BsonType.ObjectId)]
-        public string? IncomeId { get; set; }
+        public string? incomeId { get; set; }
 
         [BsonRepresentation(BsonType.ObjectId)]
-        public string? MerchantId { get; set; }
+        public string? merchantId { get; set; }
 
         [BsonRepresentation(BsonType.ObjectId)]
-        public string? FixedExpensesId { get; set; }
+        public string? fixedExpensesId { get; set; }
     }
 }

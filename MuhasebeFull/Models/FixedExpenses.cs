@@ -8,14 +8,15 @@ namespace MuhasebeFull.Models
     {
         [BsonId]
         [BsonRepresentation(BsonType.ObjectId)]
-        public string Id { get; set; }
+        public string id { get; set; }
 
-        public string Title { get; set; }
+        public string title { get; set; }
 
-        public decimal Amount { get; set; }
+        [BsonRepresentation(BsonType.Decimal128)]
+        public decimal amount { get; set; }
 
-        public string Description { get; set; }
+        public string description { get; set; }
 
-        public string UserId { get; set; }
+        public string userId { get; set; }
     }
 }

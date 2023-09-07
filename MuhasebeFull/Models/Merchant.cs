@@ -7,13 +7,13 @@ namespace Muhasebe.Models
     {
         [BsonId]
         [BsonRepresentation(BsonType.ObjectId)]
-        public string Id { get; set; }
+        public string id { get; set; }
 
-        public string Ad { get; set; }
-        public string Soyad { get; set; }
-        public decimal Bakiye { get; set; }
+        public string title { get; set; }
 
         [BsonDateTimeOptions(Kind = DateTimeKind.Local)]
-        public DateTime Date { get; set; } = DateTime.UtcNow;
+        public DateTime date { get; set; } = DateTime.UtcNow;
+
+        public string userId { get; set; }
     }
 }

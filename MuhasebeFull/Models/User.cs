@@ -8,18 +8,18 @@ namespace MuhasebeFull.Models
     {
         [BsonId]
         [BsonRepresentation(BsonType.ObjectId)]
-        public string Id { get; set; }
+        public string id { get; set; }
 
-        public string Username { get; set; }
+        public string username { get; set; }
 
-        public string Password { get; set; }
+        public string password { get; set; }
 
-        public string Status { get; set; }
+        public string status { get; set; }
 
-        public DateTime Register { get; set; }
+        public DateTime register { get; set; }
 
-        public DateTime? LastLogin { get; set; }
+        public DateTime? lastLogin { get; set; }
 
-        public string Role { get; set; }
+        public string role { get; set; }
     }
 }

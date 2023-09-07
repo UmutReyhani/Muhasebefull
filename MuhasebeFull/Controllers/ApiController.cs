@@ -6,6 +6,8 @@ using System.Text.Json;
 using Muhasebe.Attributes;
 using MongoDB.Driver.Linq;
 using MuhasebeFull.Models;
+using MongoDB.Bson;
+using System.ComponentModel.DataAnnotations;
 
 namespace Muhasebe.Controllers
 {
@@ -49,33 +51,52 @@ namespace Muhasebe.Controllers
         }
 
         #region CreateUser
-        [HttpPost("createuser")]
-        public IActionResult CreateUser([FromBody] User user)
+
+        public class _createUserReq
         {
-            if (user.Role != "Admin" && user.Role != "User")
-                return BadRequest("Role can only be 'Admin' or 'User'.");
+            [Required]
+            public string username { get; set; }
+            [Required]
+            public string password { get; set; }
+            [Required]
+            public string role { get; set; }
+        }
 
-            if (user.Status != "Active" && user.Status != "Passive")
-                return BadRequest("Status can only be 'Active' or 'Passive'.");
+        public class _createUserRes
+        {
+            [Required]
+            public string type { get; set; }
+            public string message { get; set; }
+        }
 
-            var existingUser = _userCollection.Find<User>(u => u.Username == user.Username).FirstOrDefault();
+        [HttpPost("createuser")]
+        public ActionResult<_createUserRes> CreateUser([FromBody] _createUserReq data)
+        {
+            if (data.role != "Admin" && data.role != "User")
+                return BadRequest(new _createUserRes { type = "error", message = "role can only be 'Admin' or 'User'." });
 
+            var existingUser = _userCollection.Find<User>(u => u.username == data.username).FirstOrDefault();
 
             if (existingUser != null)
             {
-                return BadRequest("Bu isimde bir kullanıcı mevcut. Başka bir kullanıcı adı seçin.");
+                return BadRequest(new _createUserRes { type = "error", message = "Bu isimde bir kullanıcı mevcut. Başka bir kullanıcı adı seçin." });
             }
 
-            user.Password = ComputeSha256Hash(user.Password);
-            user.Register = DateTime.Now;
-            user.LastLogin = null;
-            _userCollection.InsertOne(user);
-
-            return Ok(new
+            User newUser = new User
             {
-                Message = "Kullanıcı başarıyla oluşturuldu.",
-            });
+                username = data.username,
+                password = ComputeSha256Hash(data.password),
+                role = data.role,
+                status = "Active",
+                register = DateTime.Now,
+                lastLogin = null
+            };
+
+            _userCollection.InsertOne(newUser);
+
+            return Ok(new _createUserRes { type = "success", message = "Kullanıcı başarıyla oluşturuldu." });
         }
+
         #endregion
 
         #region GetUser
@@ -84,14 +105,14 @@ namespace Muhasebe.Controllers
         {
             var currentUser = GetCurrentUserFromSession();
 
-            if (currentUser.Role == "Admin")
+            if (currentUser.role == "Admin")
             {
                 var users = await _userCollection.Find(user => true).ToListAsync();
                 return Ok(users);
             }
-            else if (currentUser.Role == "User")
+            else if (currentUser.role == "User")
             {
-                var user = await _userCollection.Find<User>(u => u.Id == currentUser.Id).FirstOrDefaultAsync();
+                var user = await _userCollection.Find<User>(u => u.id == currentUser.id).FirstOrDefaultAsync();
                 if (user == null)
                     return NotFound("Kullanıcı bulunamadı.");
 
@@ -105,30 +126,67 @@ namespace Muhasebe.Controllers
         #endregion
 
         #region UpdateUser
-        [HttpPost("updateuser/{id:length(24)}"), CheckRoleAttribute]
-        public IActionResult UpdateUser(string id, [FromBody] User updatedUser)
+
+        public class _updateUserReq
+        {
+            [Required]
+            public string id { get; set; }
+            [Required]
+            public string password { get; set; }
+        }
+        public class _updateUserRes
+        {
+            [Required]
+            public string type { get; set; } // success / error 
+            public string message { get; set; }
+        }
+
+        [HttpPost("updateuser"), CheckRoleAttribute]
+        public ActionResult<_updateUserRes> UpdateUser([FromBody] _updateUserReq data)
         {
             var currentUser = GetCurrentUserFromSession();
 
-            var userToBeUpdated = _userCollection.Find<User>(u => u.Id == id).FirstOrDefault();
+            var userToBeUpdated = _userCollection.Find<User>(u => u.id == data.id).FirstOrDefault();
 
-            if (currentUser.Role == "User")
+            if (userToBeUpdated == null)
             {
-                if (currentUser.Id != userToBeUpdated.Id)
+                return NotFound("Güncellenmek istenen kullanıcı bulunamadı.");
+            }
+
+            var oldValue = JsonSerializer.Serialize(userToBeUpdated);
+
+            if (currentUser.role == "User")
+            {
+                if (currentUser.id != userToBeUpdated.id)
                 {
                     return Unauthorized("Sadece kendi şifrenizi güncelleyebilirsiniz.");
                 }
-                userToBeUpdated.Password = ComputeSha256Hash(updatedUser.Password);
+                userToBeUpdated.password = ComputeSha256Hash(data.password);
             }
-            else if (currentUser.Role == "Admin")
+            else if (currentUser.role == "Admin")
             {
-                userToBeUpdated.Password = ComputeSha256Hash(updatedUser.Password);
+                userToBeUpdated.password = ComputeSha256Hash(data.password);
             }
 
-            _userCollection.ReplaceOne(u => u.Id == id, userToBeUpdated);
+            _userCollection.ReplaceOne(u => u.id == data.id, userToBeUpdated);
 
-            return Ok(new { Message = "Kullanıcı başarıyla güncellendi." });
+            var newValue = JsonSerializer.Serialize(userToBeUpdated);
+
+            Log log = new Log
+            {
+                userId = currentUser.id,
+                actionType = "Update",
+                targetModel = "User",
+                itemId = userToBeUpdated.id,
+                oldValue = oldValue,
+                newValue = newValue,
+                date = DateTime.UtcNow
+            };
+            _logCollection.InsertOne(log);
+
+            return Ok(new _updateUserRes { type = "success", message = "Kullanıcı başarıyla güncellendi." });
         }
+
         #endregion
 
         #region DeleteUser
@@ -137,43 +195,74 @@ namespace Muhasebe.Controllers
         {
             var currentUser = GetCurrentUserFromSession();
 
-            var userToDelete = _userCollection.Find<User>(u => u.Id == id).FirstOrDefault();
+            var userToDelete = _userCollection.Find<User>(u => u.id == id).FirstOrDefault();
             if (userToDelete == null)
             {
                 return NotFound("Kullanıcı bulunamadı.");
             }
 
-            if (currentUser.Role == "User" && currentUser.Id != userToDelete.Id)
+            if (currentUser.role == "User" && currentUser.id != userToDelete.id)
             {
                 return Unauthorized("Sadece kendi hesabınızı silebilirsiniz.");
             }
 
-            _userCollection.DeleteOne(u => u.Id == id);
+            var oldValue = JsonSerializer.Serialize(userToDelete);
+
+            _userCollection.DeleteOne(u => u.id == id);
+
+            Log log = new Log
+            {
+                userId = currentUser.id,
+                actionType = "Delete",
+                targetModel = "User",
+                itemId = userToDelete.id,
+                oldValue = oldValue,
+                newValue = null,
+                date = DateTime.UtcNow
+            };
+            _logCollection.InsertOne(log);
 
             return Ok(new { Message = "Kullanıcı başarıyla silindi." });
         }
+
         #endregion
 
         #region UserLogin
-        [HttpPost("login")]
-        public IActionResult Login([FromBody] User userModel)
+
+        public class _loginReq
         {
-            if (userModel == null || string.IsNullOrEmpty(userModel.Username) || string.IsNullOrEmpty(userModel.Password))
+            [Required]
+            public string username { get; set; }
+            [Required]
+            public string password { get; set; }
+        }
+
+        public class _loginRes
+        {
+            public string type { get; set; } // success / error 
+            public string message { get; set; }
+        }
+
+        [HttpPost("login")]
+        public ActionResult<_loginRes> Login([FromBody] _loginReq loginData)
+        {
+            if (loginData == null || string.IsNullOrEmpty(loginData.username) || string.IsNullOrEmpty(loginData.password))
             {
-                return BadRequest("Kullanıcı adı veya şifre eksik.");
+                return BadRequest(new _loginRes { type = "error", message = "Kullanıcı adı veya şifre eksik." });
             }
 
-            var userInDb = _userCollection.Find<User>(u => u.Username == userModel.Username && u.Password == ComputeSha256Hash(userModel.Password)).FirstOrDefault();
+            var userInDb = _userCollection.Find<User>(u => u.username == loginData.username && u.password == ComputeSha256Hash(loginData.password)).FirstOrDefault();
 
             if (userInDb == null)
             {
-                return Unauthorized("Kullanıcı adı veya şifre hatalı.");
+                return Unauthorized(new _loginRes { type = "error", message = "Kullanıcı adı veya şifre hatalı." });
             }
 
             SetCurrentUserToSession(userInDb);
 
-            return Ok("Giriş Başarılı");
+            return Ok(new _loginRes { type = "success", message = "Giriş Başarılı" });
         }
+
         #endregion
 
         #region UserSession
@@ -193,62 +282,97 @@ namespace Muhasebe.Controllers
         }
         #endregion
 
-        #region UserStatus
-        [HttpPost("userstatus/{id:length(24)}")]
-        public IActionResult UserStatus(string id)
+        #region Userstatus
+
+        public class _userstatusReq
+        {
+            [Required]
+            public string Id { get; set; }
+        }
+
+        public class _userstatusRes
+        {
+            public string type { get; set; } // success / error 
+            public string message { get; set; }
+        }
+
+        [HttpPost("userstatus")]
+        public ActionResult<_userstatusRes> Userstatus([FromBody] _userstatusReq statusData)
         {
             var currentUser = GetCurrentUserFromSession();
-            if (currentUser == null)
+
+            if (currentUser.role != "Admin")
             {
-                return Unauthorized("Giriş yapmanız gerekmektedir.");
+                return Unauthorized(new _userstatusRes { type = "error", message = "Bu işlemi gerçekleştirmek için yetkiniz yok." });
             }
 
-            if (currentUser.Role != "Admin")
-            {
-                return Unauthorized("Bu işlemi gerçekleştirmek için yetkiniz yok.");
-            }
-
-            var userToBeUpdated = _userCollection.Find<User>(u => u.Id == id).FirstOrDefault();
+            var userToBeUpdated = _userCollection.Find<User>(u => u.id == statusData.Id).FirstOrDefault();
             if (userToBeUpdated == null)
             {
-                return NotFound("Durumu değiştirilmek istenen kullanıcı bulunamadı.");
+                return NotFound(new _userstatusRes { type = "error", message = "Durumu değiştirilmek istenen kullanıcı bulunamadı." });
             }
 
-            userToBeUpdated.Status = userToBeUpdated.Status == "Active" ? "Passive" : "Active";
-            _userCollection.ReplaceOne(u => u.Id == id, userToBeUpdated);
+            var oldValue = userToBeUpdated.status;
 
-            return Ok(new { Message = $"Kullanıcının durumu {userToBeUpdated.Status} olarak güncellendi." });
+            userToBeUpdated.status = userToBeUpdated.status == "Active" ? "Passive" : "Active";
+            _userCollection.ReplaceOne(u => u.id == statusData.Id, userToBeUpdated);
+
+            Log log = new Log
+            {
+                userId = currentUser.id,
+                actionType = "Update",
+                targetModel = "User",
+                itemId = userToBeUpdated.id,
+                oldValue = oldValue,
+                newValue = userToBeUpdated.status,
+                date = DateTime.UtcNow
+            };
+            _logCollection.InsertOne(log);
+
+            return Ok(new _userstatusRes { type = "success", message = $"Kullanıcının durumu {userToBeUpdated.status} olarak güncellendi." });
         }
+
         #endregion
+
 
         #region Accounting ADD
         [HttpPost("add-record"), CheckRoleAttribute]
         public IActionResult AddAccountingRecord([FromBody] Accounting record)
         {
             var currentUser = GetCurrentUserFromSession();
-            if (currentUser == null)
-                return Unauthorized();
 
-            if (string.IsNullOrEmpty(record.Type) || (record.Type != "Gelir" && record.Type != "Gider"))
+            if (string.IsNullOrEmpty(record.type) || (record.type != "Gelir" && record.type != "Gider"))
                 return BadRequest(new { Message = "Type sadece 'Gelir' ya da 'Gider' olabilir." });
 
-            record.UserId = currentUser.Id;
-            record.Date = DateTime.Now;
+            record.userId = currentUser.id;
+            record.date = DateTime.Now;
 
-            // Eğer boş string gelirse null yap
-            if (string.IsNullOrEmpty(record.IncomeId))
-                record.IncomeId = null;
-            if (string.IsNullOrEmpty(record.MerchantId))
-                record.MerchantId = null;
-            if (string.IsNullOrEmpty(record.FixedExpensesId))
-                record.FixedExpensesId = null;
+            //boş olabilirler
+            if (string.IsNullOrEmpty(record.incomeId))
+                record.incomeId = null;
+            if (string.IsNullOrEmpty(record.merchantId))
+                record.merchantId = null;
+            if (string.IsNullOrEmpty(record.fixedExpensesId))
+                record.fixedExpensesId = null;
 
             _accountingCollection.InsertOne(record);
+
+            Log log = new Log
+            {
+                userId = currentUser.id,
+                actionType = "Add",
+                targetModel = "Accounting",
+                itemId = record.id,
+                newValue = JsonSerializer.Serialize(record),
+                date = DateTime.UtcNow
+            };
+            _logCollection.InsertOne(log);
+
             return Ok(new { Message = "Finansal kayıt oluşturuldu." });
         }
 
-        #endregion
 
+        #endregion
 
         #region Accounting Get Record
         [HttpGet("get-records"), CheckRoleAttribute]
@@ -256,17 +380,14 @@ namespace Muhasebe.Controllers
         {
             var currentUser = GetCurrentUserFromSession();
 
-            if (currentUser == null)
-                return Unauthorized("Kullanıcı oturumu bulunamadı.");
-
-            if (currentUser.Role == "Admin")
+            if (currentUser.role == "Admin")
             {
                 var records = await _accountingCollection.Find(record => true).ToListAsync();
                 return Ok(records);
             }
-            else if (currentUser.Role == "User")
+            else if (currentUser.role == "User")
             {
-                var userRecords = await _accountingCollection.Find<Accounting>(r => r.UserId == currentUser.Id).ToListAsync();
+                var userRecords = await _accountingCollection.Find<Accounting>(r => r.userId == currentUser.id).ToListAsync();
                 if (userRecords == null || userRecords.Count == 0)
                     return NotFound("Kullanıcıya ait finansal kayıt bulunamadı.");
 
@@ -285,25 +406,39 @@ namespace Muhasebe.Controllers
         {
             var currentUser = GetCurrentUserFromSession();
 
-            if (currentUser == null)
-                return Unauthorized("Kullanıcı oturumu bulunamadı.");
-
-            var existingRecord = await _accountingCollection.Find<Accounting>(r => r.Id == updatedRecord.Id).FirstOrDefaultAsync();
+            var existingRecord = await _accountingCollection.Find<Accounting>(r => r.id == updatedRecord.id).FirstOrDefaultAsync();
 
             if (existingRecord == null)
                 return NotFound("Güncellenmek istenen finansal kayıt bulunamadı.");
 
-            if (currentUser.Role != "Admin" && existingRecord.UserId != currentUser.Id)
+            if (currentUser.role != "Admin" && existingRecord.userId != currentUser.id)
                 return Unauthorized("Bu kaydı güncellemek için yetkiniz bulunmamaktadır.");
 
-            existingRecord.Amount = updatedRecord.Amount;
-            existingRecord.Currency = updatedRecord.Currency;
-            existingRecord.Type = updatedRecord.Type;
+            string oldValue = JsonSerializer.Serialize(existingRecord);
 
-            await _accountingCollection.ReplaceOneAsync(r => r.Id == updatedRecord.Id, existingRecord);
+            existingRecord.amount = updatedRecord.amount;
+            existingRecord.currency = updatedRecord.currency;
+            existingRecord.type = updatedRecord.type;
+
+            await _accountingCollection.ReplaceOneAsync(r => r.id == updatedRecord.id, existingRecord);
+
+            string newValue = JsonSerializer.Serialize(existingRecord);
+
+            Log log = new Log
+            {
+                userId = currentUser.id,
+                actionType = "Update",
+                targetModel = "Accounting",
+                itemId = existingRecord.id,
+                oldValue = oldValue,
+                newValue = newValue,
+                date = DateTime.UtcNow
+            };
+            _logCollection.InsertOne(log);
 
             return Ok(new { Message = "Finansal kayıt başarıyla güncellendi." });
         }
+
 
         #endregion
 
@@ -313,65 +448,99 @@ namespace Muhasebe.Controllers
         {
             var currentUser = GetCurrentUserFromSession();
 
-            if (currentUser == null)
-                return Unauthorized("Kullanıcı oturumu bulunamadı.");
-
-            var existingRecord = await _accountingCollection.Find<Accounting>(r => r.Id == id).FirstOrDefaultAsync();
+            var existingRecord = await _accountingCollection.Find<Accounting>(r => r.id == id).FirstOrDefaultAsync();
 
             if (existingRecord == null)
                 return NotFound("Silmek istenen finansal kayıt bulunamadı.");
 
-            if (currentUser.Role != "Admin" && existingRecord.UserId != currentUser.Id)
+            if (currentUser.role != "Admin" && existingRecord.userId != currentUser.id)
                 return Unauthorized("Bu kaydı silmek için yetkiniz bulunmamaktadır.");
 
-            await _accountingCollection.DeleteOneAsync(r => r.Id == id);
+            string oldValue = JsonSerializer.Serialize(existingRecord);
+
+            await _accountingCollection.DeleteOneAsync(r => r.id == id);
+
+            Log log = new Log
+            {
+                userId = currentUser.id,
+                actionType = "Delete Accounting Record",
+                targetModel = "Accounting",
+                itemId = id,
+                oldValue = oldValue,
+                newValue = null,
+                date = DateTime.UtcNow
+            };
+            _logCollection.InsertOne(log);
 
             return Ok(new { Message = "Finansal kayıt başarıyla silindi." });
         }
+
         #endregion
 
-        //#region Accounting Reports
-        //[HttpGet("accounting-reports"), CheckRoleAttribute]
-        //public IActionResult GetAccountingSummary([FromQuery] string interval = "1month")
-        //{
-        //    DateTime now = DateTime.Now;
-        //    DateTime startDate = now;
-        //    DateTime endDate = now;
+        #region Accounting Reports
+        [HttpGet("accounting-reports"), CheckRoleAttribute]
+        public IActionResult GetAccountingSummary([FromQuery] string interval = "1month")
+        {
+            DateTime now = DateTime.Now;
+            DateTime startdate = now;
+            DateTime enddate = now;
 
-        //    switch (interval)
-        //    {
-        //        case "15days":
-        //            startDate = now.Date.AddDays(-15);
-        //            endDate = now.Date.AddDays(1);
-        //            break;
-        //        case "1month":
-        //            startDate = now.Date.AddMonths(-1);
-        //            endDate = now.Date.AddDays(1);
-        //            break;
-        //        default:
-        //            return BadRequest("Geçersiz Tarih Aralığı(15days)-(1month) doğru kullanım olacak.");
-        //    }
+            switch (interval)
+            {
+                case "15days":
+                    startdate = now.Date.AddDays(-15);
+                    enddate = now.Date.AddDays(1);
+                    break;
+                case "1month":
+                    startdate = now.Date.AddMonths(-1);
+                    enddate = now.Date.AddDays(1);
+                    break;
+                default:
+                    return BadRequest("Geçersiz Tarih Aralığı(15days)-(1month) doğru kullanım olacak.");
+            }
 
-        //    var currentUser = GetCurrentUserFromSession();
-        //    if (currentUser == null)
-        //        return Unauthorized();
+            var currentUser = GetCurrentUserFromSession();
+            if (currentUser == null)
+                return Unauthorized();
 
-        //    var dateFilter = _Accounting.AsQueryable().Where(x => x.Date > startDate && x.Date < endDate);
+            var dateFilter = _accountingCollection.AsQueryable().Where(x => x.date > startdate && x.date < enddate);
 
 
-        //    if (currentUser.Role.ToString() != "Admin")
-        //    {
-        //        dateFilter = dateFilter.Where(x => x.UserId == currentUser.Id);
-        //    }
+            if (currentUser.role.ToString() != "Admin")
+            {
+                dateFilter = dateFilter.Where(x => x.userId == currentUser.id);
+            }
 
-        //    var gelir = dateFilter.Where(x => x.Type == AccountingType.Gelir).Sum(x => x.Amount);
-        //    var gider = dateFilter.Where(x => x.Type == AccountingType.Gider).Sum(x => x.Amount);
-        //    var bakiye = gelir - gider;
+            //////RAPORLAMA
+            //fixed expenses all
+            var totalFixedExpenses = _fixedExpensesCollection.AsQueryable().Sum(f => f.amount);
+            // Diğer giderlerle birlikte toplam gideri hesapla
+            var gelirr = dateFilter.Where(x => x.type == "Gelir").Sum(x => x.amount);
+            var fixedgider = dateFilter.Where(x => x.type == "Gider").Sum(x => x.amount) + totalFixedExpenses;
+            var bakiyee = gelirr - fixedgider;
 
-        //    return Ok(new { Gelir = gelir, Gider = gider, Kar = bakiye });
-        //}
+            // Sabit gelirlerin toplamını al
+            var totalIncome = _incomeCollection.AsQueryable().Sum(i => i.amount);
+            // Diğer gelirlerle birlikte toplam geliri hesapla
+            var gelirrr = dateFilter.Where(x => x.type == "Gelir").Sum(x => x.amount) + totalIncome;
 
-        //#endregion
+
+            var gelir = dateFilter.Where(x => x.type == "Gelir").Sum(x => x.amount);
+            var gider = dateFilter.Where(x => x.type == "Gider").Sum(x => x.amount);
+            var bakiye = gelir - gider;
+
+            return Ok(new
+            {
+                EskiGelir = gelir,
+                EskiGider = gider,
+                EskiBakiye = bakiye,
+                YeniGelir = gelirrr,
+                YeniGider = fixedgider,
+                YeniBakiye = bakiyee
+            });
+        }
+
+        #endregion
 
         #region Create Fixed Expenses
         [HttpPost("add-fixed-expenses"), CheckRoleAttribute]
@@ -379,10 +548,7 @@ namespace Muhasebe.Controllers
         {
             var currentUser = GetCurrentUserFromSession();
 
-            if (currentUser == null)
-                return Unauthorized();
-
-            expenses.UserId = currentUser.Id;
+            expenses.userId = currentUser.id;
 
             _fixedExpensesCollection.InsertOne(expenses);
 
@@ -396,14 +562,14 @@ namespace Muhasebe.Controllers
         {
             var currentUser = GetCurrentUserFromSession();
 
-            if (currentUser.Role == "Admin")
+            if (currentUser.role == "Admin")
             {
                 var expenses = await _fixedExpensesCollection.Find(expense => true).ToListAsync();
                 return Ok(expenses);
             }
-            else if (currentUser.Role == "User")
+            else if (currentUser.role == "User")
             {
-                var userExpenses = await _fixedExpensesCollection.Find<FixedExpenses>(expense => expense.UserId == currentUser.Id).ToListAsync();
+                var userExpenses = await _fixedExpensesCollection.Find<FixedExpenses>(expense => expense.userId == currentUser.id).ToListAsync();
                 return Ok(userExpenses);
             }
             else
@@ -419,17 +585,14 @@ namespace Muhasebe.Controllers
         {
             var currentUser = GetCurrentUserFromSession();
 
-            if (currentUser == null)
-                return Unauthorized();
-
-            var existingExpense = await _fixedExpensesCollection.Find<FixedExpenses>(expense => expense.Id == expenses.Id).FirstOrDefaultAsync();
+            var existingExpense = await _fixedExpensesCollection.Find<FixedExpenses>(expense => expense.id == expenses.id).FirstOrDefaultAsync();
             if (existingExpense == null)
                 return NotFound("Gider bulunamadı.");
 
-            if (currentUser.Role != "Admin" && existingExpense.UserId != currentUser.Id)
+            if (currentUser.role != "Admin" && existingExpense.userId != currentUser.id)
                 return Unauthorized("Bu gideri güncelleme yetkiniz yok.");
 
-            _fixedExpensesCollection.ReplaceOne(expense => expense.Id == expenses.Id, expenses);
+            _fixedExpensesCollection.ReplaceOne(expense => expense.id == expenses.id, expenses);
 
             return Ok(new { Message = "Sabit gider kaydı başarıyla güncellendi." });
         }
@@ -441,20 +604,187 @@ namespace Muhasebe.Controllers
         {
             var currentUser = GetCurrentUserFromSession();
 
-            if (currentUser == null)
-                return Unauthorized();
-
-            var existingExpense = await _fixedExpensesCollection.Find<FixedExpenses>(expense => expense.Id == id).FirstOrDefaultAsync();
+            var existingExpense = await _fixedExpensesCollection.Find<FixedExpenses>(expense => expense.id == id).FirstOrDefaultAsync();
             if (existingExpense == null)
                 return NotFound("Gider bulunamadı.");
 
-            if (currentUser.Role != "Admin" && existingExpense.UserId != currentUser.Id)
+            if (currentUser.role != "Admin" && existingExpense.userId != currentUser.id)
                 return Unauthorized("Bu gideri silme yetkiniz yok.");
 
-            _fixedExpensesCollection.DeleteOne(expense => expense.Id == id);
+            _fixedExpensesCollection.DeleteOne(expense => expense.id == id);
 
             return Ok(new { Message = "Sabit gider kaydı başarıyla silindi." });
         }
+        #endregion
+
+        #region Add Income
+        [HttpPost("add-income"), CheckRoleAttribute]
+        public IActionResult AddIncome([FromBody] Income income)
+        {
+            var currentUser = GetCurrentUserFromSession();
+
+            income.userId = currentUser.id;
+            _incomeCollection.InsertOne(income);
+            return Ok(new { Message = "Gelir kaydı oluşturuldu." });
+        }
+
+        #endregion
+
+        #region Update Income
+        [HttpPost("update-income"), CheckRoleAttribute]
+        public async Task<IActionResult> UpdateIncome([FromBody] Income incomeToUpdate)
+        {
+            var currentUser = GetCurrentUserFromSession();
+
+            if (currentUser.role != "Admin")
+            {
+                return Unauthorized("Bu işlemi gerçekleştirmek için yetkiniz yok.");
+            }
+
+            var income = await _incomeCollection.Find<Income>(i => i.id == incomeToUpdate.id).FirstOrDefaultAsync();
+
+            if (income == null)
+            {
+                return NotFound("Güncellenmek istenen gelir kaydı bulunamadı.");
+            }
+
+            income.title = incomeToUpdate.title;
+            income.amount = incomeToUpdate.amount;
+            income.description = incomeToUpdate.description;
+
+            await _incomeCollection.ReplaceOneAsync(i => i.id == income.id, income);
+
+            return Ok(new { Message = "Gelir kaydı güncellendi." });
+        }
+
+        #endregion
+
+        #region Get Income
+        [HttpGet("get-income"), CheckRoleAttribute]
+        public async Task<IActionResult> GetIncome()
+        {
+            var currentUser = GetCurrentUserFromSession();
+
+            if (currentUser.role == "Admin")
+            {
+                var incomes = await _incomeCollection.Find(income => true).ToListAsync();
+                return Ok(incomes);
+            }
+            else
+            {
+                var income = await _incomeCollection.Find<Income>(i => i.id == currentUser.id).ToListAsync();
+                return Ok(income);
+            }
+        }
+
+        #endregion
+
+        #region Delete Income 
+        [HttpPost("delete-income"), CheckRoleAttribute]
+        public async Task<IActionResult> DeleteIncome([FromBody] string incomeId)
+        {
+            var currentUser = GetCurrentUserFromSession();
+
+            if (currentUser.role != "Admin")
+            {
+                return Unauthorized("Bu işlemi gerçekleştirmek için yetkiniz yok.");
+            }
+
+            var deleteResult = await _incomeCollection.DeleteOneAsync(i => i.id == incomeId);
+
+            if (deleteResult.DeletedCount > 0)
+            {
+                return Ok(new { Message = "Gelir kaydı silindi." });
+            }
+
+            return NotFound("Silmek istenen gelir kaydı bulunamadı.");
+        }
+        #endregion
+
+        #region Add Merchant
+        [HttpPost("add-merchant"), CheckRoleAttribute]
+        public IActionResult AddMerchant([FromBody] Merchant merchant)
+        {
+            var currentUser = GetCurrentUserFromSession();
+            if (currentUser == null)
+                return Unauthorized();
+
+            merchant.userId = currentUser.id;
+            merchant.date = DateTime.Now;
+
+            _merchantCollection.InsertOne(merchant);
+            return Ok(new { Message = "cari kaydedildi." });
+        }
+        #endregion
+
+        #region Update Merchant
+        [HttpPost("update-merchant"), CheckRoleAttribute]
+        public async Task<IActionResult> UpdateMerchant([FromBody] Merchant merchantToUpdate)
+        {
+            var currentUser = GetCurrentUserFromSession();
+
+            if (currentUser.role != "Admin")
+            {
+                return Unauthorized("Bu işlemi gerçekleştirmek için yetkiniz yok.");
+            }
+
+            var merchant = await _merchantCollection.Find<Merchant>(m => m.id == merchantToUpdate.id).FirstOrDefaultAsync();
+
+            if (merchant == null)
+            {
+                return NotFound("Güncellenmek istenen cari bulunamadı.");
+            }
+
+            merchant.title = merchantToUpdate.title;
+
+            await _merchantCollection.ReplaceOneAsync(m => m.id == merchant.id, merchant);
+
+            return Ok(new { Message = "cari bilgisi güncellendi." });
+        }
+
+        #endregion
+
+        #region Get Merchant
+        [HttpGet("get-merchant"), CheckRoleAttribute]
+        public async Task<IActionResult> GetMerchant()
+        {
+            var currentUser = GetCurrentUserFromSession();
+
+            if (currentUser.role == "Admin")
+            {
+                var merchants = await _merchantCollection.Find(merchant => true).ToListAsync();
+                return Ok(merchants);
+            }
+            else
+            {
+                var merchant = await _merchantCollection.Find<Merchant>(m => m.userId == currentUser.id).ToListAsync();
+                return Ok(merchant);
+            }
+        }
+
+        #endregion
+
+        #region Delete Merhant
+        [HttpPost("delete-merchant"), CheckRoleAttribute]
+        public async Task<IActionResult> DeleteMerchant([FromBody] string merchantId)
+        {
+            var currentUser = GetCurrentUserFromSession();
+
+            if (currentUser.role != "Admin")
+            {
+                return Unauthorized("Bu işlemi gerçekleştirmek için yetkiniz yok.");
+            }
+
+            var deleteResult = await _merchantCollection.DeleteOneAsync(m => m.id == merchantId);
+
+            if (deleteResult.DeletedCount > 0)
+            {
+                return Ok(new { Message = "Car kaydı silindi." });
+            }
+
+            return NotFound("Silmek istenen cari bulunamadı.");
+        }
+
         #endregion
     }
 
