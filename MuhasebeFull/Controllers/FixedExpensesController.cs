@@ -7,17 +7,21 @@ using Muhasebe.Services;
 using MuhasebeFull.Models;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
+using static AccountingController;
+using Muhasebe.Models;
 
 [Route("api/fixedexpenses")]
 public class FixedExpensesController : ControllerBase
 {
     private readonly IConnectionService _connectionService;
     private IMongoCollection<FixedExpenses> _fixedExpensesCollection;
+    private IMongoCollection<Accounting> _accountingCollection;
 
     public FixedExpensesController(IConnectionService connectionService)
     {
         _connectionService = connectionService;
         _fixedExpensesCollection = _connectionService.db().GetCollection<FixedExpenses>("FixedExpensesCollection");
+        _accountingCollection = _connectionService.db().GetCollection<Accounting>("AccountingCollection");
     }
 
     #region UserSession
@@ -39,22 +43,25 @@ public class FixedExpensesController : ControllerBase
 
     #region FixedExpensesAdd
 
-    public class AddFixedExpensesReq
+    public class _addFixedExpensesReq
     {
+        [Required]
         public string title { get; set; }
         public string? description { get; set; }
         [BsonRepresentation(BsonType.Decimal128)]
+        [Required]
         public decimal amount { get; set; }
     }
 
-    public class AddFixedExpensesRes
+    public class _addFixedExpensesRes
     {
+        [Required]
         public string type { get; set; } = "success";
         public string message { get; set; }
     }
 
-    [HttpPost("add-fixed-expenses"), CheckRoleAttribute]
-    public IActionResult AddFixedExpenses([FromBody] AddFixedExpensesReq expensesReq)
+    [HttpPost("addFixedExpenses"), CheckRoleAttribute]
+    public ActionResult<_addFixedExpensesRes> AddFixedExpenses([FromBody] _addFixedExpensesReq expensesReq)
     {
         var currentUser = GetCurrentUserFromSession();
 
@@ -68,61 +75,104 @@ public class FixedExpensesController : ControllerBase
 
         _fixedExpensesCollection.InsertOne(expenses);
 
-        return Ok(new AddFixedExpensesRes { message = "Sabit gider kaydı başarıyla oluşturuldu." });
+        return Ok(new _addFixedExpensesRes { message = "Sabit gider kaydı başarıyla oluşturuldu." });
     }
 
     #endregion
 
     #region Get Fixed Expenses
-    [HttpGet("get-fixed-expenses"), CheckRoleAttribute]
-    public async Task<IActionResult> GetFixedExpenses()
+
+    public class _getFixedExpensesReq
+    {
+        public int page { get; set; } = 1;
+        public int offset { get; set; } = 20;
+        public string? userId { get; set; }
+    }
+
+    public class _getFixedExpensesRes
+    {
+        public long? total { get; set; }
+        public List<FixedExpenses>? data { get; set; }
+        [Required]
+        public string type { get; set; }
+        public string? message { get; set; }
+    }
+
+    [HttpPost("getFixedExpenses"), CheckRoleAttribute]
+    public async Task<ActionResult<_getFixedExpensesRes>> GetFixedExpenses([FromBody] _getFixedExpensesReq req)
     {
         var currentUser = GetCurrentUserFromSession();
 
-        if (currentUser.role == "Admin")
+        if (currentUser == null)
+            return Ok(new _getFixedExpensesRes { type = "error", message = "Oturum bilgisi bulunamadı." });
+
+        var filterBuilder = Builders<FixedExpenses>.Filter;
+        FilterDefinition<FixedExpenses> filter;
+
+        if (currentUser.role.ToString() == "Admin" && !string.IsNullOrEmpty(req.userId))
         {
-            var expenses = await _fixedExpensesCollection.Find(expense => true).ToListAsync();
-            return Ok(expenses);
+            filter = filterBuilder.Eq(e => e.userId, req.userId);
         }
-        else if (currentUser.role == "User")
+        else if (currentUser.role.ToString() == "User")
         {
-            var userExpenses = await _fixedExpensesCollection.Find<FixedExpenses>(expense => expense.userId == currentUser.id).ToListAsync();
-            return Ok(userExpenses);
+            filter = filterBuilder.Eq(e => e.userId, currentUser.id);
         }
         else
         {
-            return Unauthorized("Bu işlemi gerçekleştirmek için yetkiniz yok.");
+            return Ok(new _getFixedExpensesRes { type = "error", message = "yetkisiz işlem." });
         }
+
+        var total = await _fixedExpensesCollection.Find(filter).CountDocumentsAsync();
+        var expenses = await _fixedExpensesCollection.Find(filter)
+                        .Skip((req.page - 1) * req.offset)
+                        .Limit(req.offset)
+                        .ToListAsync();
+
+        return Ok(new _getFixedExpensesRes
+        {
+            total = total,
+            data = expenses,
+            type = "success",
+            message = "Sabit gider kayıtları başarıyla alındı."
+        });
     }
     #endregion
 
+
+
+
+
+
     #region UpdateFixedExpenses
 
-    public class UpdateFixedExpensesReq
+    public class _updateFixedExpensesReq
     {
+        [Required]
         public string title { get; set; }
         public string? description { get; set; }
         [BsonRepresentation(BsonType.Decimal128)]
+        [Required]
         public decimal amount { get; set; }
     }
 
-    public class UpdateFixedExpensesRes
+    public class _updateFixedExpensesRes
     {
+        [Required]
         public string type { get; set; } = "success";
         public string message { get; set; }
     }
 
-    [HttpPost("update-fixed-expenses"), CheckRoleAttribute]
-    public async Task<IActionResult> UpdateFixedExpenses([FromBody] UpdateFixedExpensesReq expensesReq)
+    [HttpPost("updateFixedExpenses"), CheckRoleAttribute]
+    public async Task<ActionResult<_updateFixedExpensesRes>> UpdateFixedExpenses([FromBody] _updateFixedExpensesReq expensesReq)
     {
         var currentUser = GetCurrentUserFromSession();
 
         var existingExpense = await _fixedExpensesCollection.Find<FixedExpenses>(expense => expense.id == currentUser.id).FirstOrDefaultAsync();
         if (existingExpense == null)
-            return NotFound(new UpdateFixedExpensesRes { type = "error", message = "Gider bulunamadı." });
+            return NotFound(new _updateFixedExpensesRes { type = "error", message = "Gider bulunamadı." });
 
         if (currentUser.role != "Admin" && existingExpense.userId != currentUser.id)
-            return Unauthorized(new UpdateFixedExpensesRes { type = "error", message = "Bu gideri güncelleme yetkiniz yok." });
+            return Unauthorized(new _updateFixedExpensesRes { type = "error", message = "Bu gideri güncelleme yetkiniz yok." });
 
         FixedExpenses updatedExpense = existingExpense;
         updatedExpense.title = expensesReq.title;
@@ -131,7 +181,7 @@ public class FixedExpensesController : ControllerBase
 
         await _fixedExpensesCollection.ReplaceOneAsync(expense => expense.id == updatedExpense.id, updatedExpense);
 
-        return Ok(new UpdateFixedExpensesRes { message = "Sabit gider kaydı başarıyla güncellendi." });
+        return Ok(new _updateFixedExpensesRes { message = "Sabit gider kaydı başarıyla güncellendi." });
     }
 
     #endregion
@@ -151,7 +201,7 @@ public class FixedExpensesController : ControllerBase
         public string message { get; set; }
     }
 
-    [HttpPost("delete-fixed-expenses"), CheckRoleAttribute]
+    [HttpPost("deleteFixedExpenses"), CheckRoleAttribute]
     public async Task<ActionResult<_deleteFixedExpenseRes>> DeleteFixedExpenses([FromBody] _deleteFixedExpenseReq data)
     {
         var currentUser = GetCurrentUserFromSession();

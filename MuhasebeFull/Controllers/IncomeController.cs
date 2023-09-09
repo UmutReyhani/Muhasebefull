@@ -7,18 +7,21 @@ using Muhasebe.Services;
 using MuhasebeFull.Models;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
-using static Muhasebe.Controllers.UserController;
+using Muhasebe.Models;
 
 [Route("api/incomes")]
 public class IncomesController : ControllerBase
 {
     private readonly IConnectionService _connectionService;
     private IMongoCollection<Income> _incomeCollection;
+    private IMongoCollection<Accounting> _accountingCollection;
 
     public IncomesController(IConnectionService connectionService)
     {
         _connectionService = connectionService;
         _incomeCollection = _connectionService.db().GetCollection<Income>("IncomeCollection");
+        _accountingCollection = _connectionService.db().GetCollection<Accounting>("AccountingCollection");
+
     }
 
     #region UserSession
@@ -40,22 +43,25 @@ public class IncomesController : ControllerBase
 
     #region IncomeAdd
 
-    public class AddIncomeReq
+    public class _addIncomeReq
     {
+        [Required]
         public string title { get; set; }
         public string? description { get; set; }
         [BsonRepresentation(BsonType.Decimal128)]
+        [Required]
         public decimal amount { get; set; }
     }
 
-    public class AddIncomeRes
+    public class _addIncomeRes
     {
+        [Required]
         public string type { get; set; } = "success";
         public string message { get; set; }
     }
 
-    [HttpPost("add-income"), CheckRoleAttribute]
-    public IActionResult AddIncome([FromBody] AddIncomeReq incomeReq)
+    [HttpPost("addIncome"), CheckRoleAttribute]
+    public ActionResult<_addIncomeRes> AddIncome([FromBody] _addIncomeReq incomeReq)
     {
         var currentUser = GetCurrentUserFromSession();
 
@@ -69,41 +75,44 @@ public class IncomesController : ControllerBase
 
         _incomeCollection.InsertOne(income);
 
-        return Ok(new AddIncomeRes { message = "Gelir kaydı başarıyla oluşturuldu." });
+        return Ok(new _addIncomeRes { message = "Gelir kaydı başarıyla oluşturuldu." });
     }
 
     #endregion
 
     #region UpdateIncome
 
-    public class UpdateIncomeReq
+    public class _updateIncomeReq
     {
+        [Required]
         public string title { get; set; }
         public string? description { get; set; }
+        [Required]
         public decimal amount { get; set; }
     }
 
-    public class UpdateIncomeRes
+    public class _updateIncomeRes
     {
+        [Required]
         public string type { get; set; } = "success";
         public string message { get; set; }
     }
 
-    [HttpPost("update-income"), CheckRoleAttribute]
-    public async Task<IActionResult> UpdateIncome([FromBody] UpdateIncomeReq incomeReq)
+    [HttpPost("updateIncome"), CheckRoleAttribute]
+    public async Task<ActionResult<_updateIncomeRes>> UpdateIncome([FromBody] _updateIncomeReq incomeReq)
     {
         var currentUser = GetCurrentUserFromSession();
 
         if (currentUser.role != "Admin")
         {
-            return Unauthorized(new UpdateIncomeRes { type = "error", message = "Bu işlemi gerçekleştirmek için yetkiniz yok." });
+            return Unauthorized(new _updateIncomeRes { type = "error", message = "Bu işlemi gerçekleştirmek için yetkiniz yok." });
         }
 
         var income = await _incomeCollection.Find<Income>(i => i.id == currentUser.id).FirstOrDefaultAsync();
 
         if (income == null)
         {
-            return NotFound(new UpdateIncomeRes { type = "error", message = "Güncellenmek istenen gelir kaydı bulunamadı." });
+            return NotFound(new _updateIncomeRes { type = "error", message = "Güncellenmek istenen gelir kaydı bulunamadı." });
         }
 
         income.title = incomeReq.title;
@@ -112,27 +121,39 @@ public class IncomesController : ControllerBase
 
         await _incomeCollection.ReplaceOneAsync(i => i.id == income.id, income);
 
-        return Ok(new UpdateIncomeRes { message = "Gelir kaydı başarıyla güncellendi." });
+        return Ok(new _updateIncomeRes { message = "Gelir kaydı başarıyla güncellendi." });
     }
 
     #endregion
 
     #region Get Income
-    [HttpGet("get-income"), CheckRoleAttribute]
-    public async Task<IActionResult> GetIncome()
+
+    public class _incomeFilterRequest
+    {
+        public DateTime? StartDate { get; set; }
+        public DateTime? EndDate { get; set; }
+    }
+
+    [HttpPost("getIncome"), CheckRoleAttribute]
+    public async Task<ActionResult<IEnumerable<Accounting>>> GetIncome([FromBody] _incomeFilterRequest filterRequest)
     {
         var currentUser = GetCurrentUserFromSession();
 
-        if (currentUser.role == "Admin")
+        var startDate = filterRequest.StartDate ?? DateTime.Now.Date;
+        var endDate = filterRequest.EndDate ?? DateTime.Now.Date.AddDays(1);
+
+        FilterDefinition<Accounting> filter = Builders<Accounting>.Filter.Eq(a => a.type, "Gelir")
+            & Builders<Accounting>.Filter.Gte(a => a.date, startDate)
+            & Builders<Accounting>.Filter.Lt(a => a.date, endDate);
+
+        if (currentUser.role != "Admin")
         {
-            var incomes = await _incomeCollection.Find(income => true).ToListAsync();
-            return Ok(incomes);
+            filter = filter & Builders<Accounting>.Filter.Eq(a => a.userId, currentUser.id);
         }
-        else
-        {
-            var income = await _incomeCollection.Find<Income>(i => i.id == currentUser.id).ToListAsync();
-            return Ok(income);
-        }
+
+        var incomes = await _accountingCollection.Find(filter).ToListAsync();
+
+        return Ok(incomes);
     }
 
     #endregion
@@ -152,7 +173,7 @@ public class IncomesController : ControllerBase
         public string message { get; set; }
     }
 
-    [HttpPost("delete-income"), CheckRoleAttribute]
+    [HttpPost("deleteIncome"), CheckRoleAttribute]
     public async Task<ActionResult<_deleteIncomeRes>> DeleteIncome([FromBody] _deleteIncomeReq data)
     {
         var currentUser = GetCurrentUserFromSession();

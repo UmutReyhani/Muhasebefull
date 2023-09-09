@@ -6,13 +6,12 @@ using System.Text.Json;
 using Muhasebe.Attributes;
 using MongoDB.Driver.Linq;
 using MuhasebeFull.Models;
-using MongoDB.Bson;
 using System.ComponentModel.DataAnnotations;
-using MongoDB.Bson.Serialization.Attributes;
+using MongoDB.Bson;
 
 namespace Muhasebe.Controllers
 {
-    [Route("api/[controller]")]
+    [Route("api/user")]
     [ApiController]
     public class UserController : ControllerBase
     {
@@ -44,6 +43,23 @@ namespace Muhasebe.Controllers
             _logCollection = _connectionService.db().GetCollection<Log>("LogCollection");
         }
 
+        #region UserSession
+        private void SetCurrentUserToSession(User user)
+        {
+            var userJson = JsonSerializer.Serialize(user);
+            HttpContext.Session.SetString("CurrentUser", userJson);
+        }
+
+        private User? GetCurrentUserFromSession()
+        {
+            var userJson = HttpContext.Session.GetString("CurrentUser");
+            if (string.IsNullOrEmpty(userJson))
+                return null;
+
+            return JsonSerializer.Deserialize<User>(userJson);
+        }
+        #endregion
+
         #region CreateUser
 
         public class _createUserReq
@@ -63,7 +79,7 @@ namespace Muhasebe.Controllers
             public string message { get; set; }
         }
 
-        [HttpPost("createuser")]
+        [HttpPost("createUser")]
         public ActionResult<_createUserRes> CreateUser([FromBody] _createUserReq data)
         {
             if (data.role != "Admin" && data.role != "User")
@@ -93,33 +109,77 @@ namespace Muhasebe.Controllers
 
         #endregion
 
-        #region GetUser
-        [HttpGet("getuserdetail"), CheckRoleAttribute]
-        public async Task<IActionResult> GetUser(int page = 1)
-        {
-            const int pageSize = 10;
-            var skip = (page - 1) * pageSize;
+        #region GetUser Details
 
+        public class _getUserDetailsReq
+        {
+            public int page { get; set; } = 1;
+            public int offset { get; set; } = 10; // pageSize olarak da adlandırılabilir
+        }
+
+        public class _getUserDetailsRes
+        {
+            public long? total { get; set; }
+            public List<User>? data { get; set; }
+            [Required]
+            public string type { get; set; }
+            public string? message { get; set; }
+        }
+
+        [HttpPost("getuserDetail"), CheckRoleAttribute]
+        public async Task<ActionResult<_getUserDetailsRes>> GetUserDetails([FromBody] _getUserDetailsReq req)
+        {
             var currentUser = GetCurrentUserFromSession();
+            _getUserDetailsRes response = new _getUserDetailsRes();
+
+            if (currentUser == null)
+            {
+                response.type = "error";
+                response.message = "Oturum bilgisi bulunamadı.";
+                return Ok(response);
+            }
 
             if (currentUser.role == "Admin")
             {
-                var users = await _userCollection.Find(user => true).Skip(skip).Limit(pageSize).ToListAsync();
-                return Ok(users);
+                var total = (int?)await _userCollection.CountDocumentsAsync(new BsonDocument());
+                var users = await _userCollection.Find(user => true)
+                                                 .Skip((req.page - 1) * req.offset)
+                                                 .Limit(req.offset)
+                                                 .ToListAsync();
+
+                return Ok(new _getUserDetailsRes
+                {
+                    total = total,
+                    data = users,
+                    type = "success",
+                    message = "Kullanıcı detayları başarıyla alındı."
+                });
             }
             else if (currentUser.role == "User")
             {
                 var user = await _userCollection.Find<User>(u => u.id == currentUser.id).FirstOrDefaultAsync();
                 if (user == null)
-                    return NotFound("Kullanıcı bulunamadı.");
+                {
+                    response.type = "error";
+                    response.message = "Kullanıcı bulunamadı.";
+                    return NotFound(response);
+                }
 
-                return Ok(user);
+                return Ok(new _getUserDetailsRes
+                {
+                    data = new List<User> { user },
+                    type = "success",
+                    message = "Kullanıcı detayı başarıyla alındı."
+                });
             }
             else
             {
-                return Unauthorized("Bu işlemi gerçekleştirmek için yetkiniz yok.");
+                response.type = "error";
+                response.message = "Bu işlemi gerçekleştirmek için yetkiniz yok.";
+                return Unauthorized(response);
             }
         }
+
         #endregion
 
         #region UpdateUser
@@ -137,7 +197,7 @@ namespace Muhasebe.Controllers
             public string message { get; set; }
         }
 
-        [HttpPost("updateuser"), CheckRoleAttribute]
+        [HttpPost("updateUser"), CheckRoleAttribute]
         public ActionResult<_updateUserRes> UpdateUser([FromBody] _updateUserReq data)
         {
             var currentUser = GetCurrentUserFromSession();
@@ -200,7 +260,7 @@ namespace Muhasebe.Controllers
             public string message { get; set; }
         }
 
-        [HttpPost("deleteuser"), CheckRoleAttribute]
+        [HttpPost("deleteUser"), CheckRoleAttribute]
         public ActionResult<_deleteUserRes> DeleteUser([FromBody] _deleteUserReq data)
         {
             var currentUser = GetCurrentUserFromSession();
@@ -249,6 +309,7 @@ namespace Muhasebe.Controllers
 
         public class _loginRes
         {
+            [Required]
             public string type { get; set; } // success / error 
             public string message { get; set; }
         }
@@ -278,23 +339,6 @@ namespace Muhasebe.Controllers
         }
         #endregion
 
-        #region UserSession
-        private void SetCurrentUserToSession(User user)
-        {
-            var userJson = JsonSerializer.Serialize(user);
-            HttpContext.Session.SetString("CurrentUser", userJson);
-        }
-
-        private User? GetCurrentUserFromSession()
-        {
-            var userJson = HttpContext.Session.GetString("CurrentUser");
-            if (string.IsNullOrEmpty(userJson))
-                return null;
-
-            return JsonSerializer.Deserialize<User>(userJson);
-        }
-        #endregion
-
         #region Userstatus Update
 
         public class _userstatusReq
@@ -306,11 +350,12 @@ namespace Muhasebe.Controllers
 
         public class _userstatusRes
         {
+            [Required]
             public string type { get; set; } // success / error 
             public string message { get; set; }
         }
 
-        [HttpPost("userstatus")]
+        [HttpPost("userStatus")]
         public ActionResult<_userstatusRes> Userstatus([FromBody] _userstatusReq statusData)
         {
             var currentUser = GetCurrentUserFromSession();

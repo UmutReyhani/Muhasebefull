@@ -1,6 +1,4 @@
 ﻿using Microsoft.AspNetCore.Mvc;
-using MongoDB.Bson.Serialization.Attributes;
-using MongoDB.Bson;
 using MongoDB.Driver;
 using Muhasebe.Attributes;
 using Muhasebe.Services;
@@ -8,7 +6,6 @@ using MuhasebeFull.Models;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using Muhasebe.Models;
-using static Muhasebe.Controllers.UserController;
 
 [Route("api/merchants")]
 public class MerchantsController : ControllerBase
@@ -41,24 +38,26 @@ public class MerchantsController : ControllerBase
 
     #region AddMerchant
 
-    public class AddMerchantReq
+    public class _addMerchantReq
     {
+        [Required]
         public string title { get; set; }
     }
 
-    public class AddMerchantRes
+    public class _addMerchantRess
     {
+        [Required]
         public string type { get; set; } = "success";
         public string message { get; set; }
     }
 
-    [HttpPost("add-merchant"), CheckRoleAttribute]
-    public IActionResult AddMerchant([FromBody] AddMerchantReq merchantReq)
+    [HttpPost("addMerchant"), CheckRoleAttribute]
+    public ActionResult<_addMerchantRess> AddMerchant([FromBody] _addMerchantReq merchantReq)
     {
         var currentUser = GetCurrentUserFromSession();
 
         if (currentUser == null)
-            return Unauthorized(new AddMerchantRes { type = "error", message = "Yetkisiz erişim." });
+            return Unauthorized(new _addMerchantRess { type = "error", message = "Yetkisiz erişim." });
 
         Merchant merchant = new Merchant
         {
@@ -69,101 +68,145 @@ public class MerchantsController : ControllerBase
 
         _merchantCollection.InsertOne(merchant);
 
-        return Ok(new AddMerchantRes { message = "Cari kaydedildi." });
+        return Ok(new _addMerchantRess { message = "Cari kaydedildi." });
     }
 
     #endregion
 
     #region UpdateMerchant
 
-    public class UpdateMerchantReq
+    public class _updateMerchantReq
     {
+        [Required]
+        public string id { get; set; }
+
+        [Required]
         public string title { get; set; }
     }
 
-    public class UpdateMerchantRes
+    public class _updateMerchantRess
     {
+        [Required]
         public string type { get; set; } = "success";
         public string message { get; set; }
     }
 
-    [HttpPost("update-merchant"), CheckRoleAttribute]
-    public async Task<IActionResult> UpdateMerchant([FromBody] UpdateMerchantReq updateReq)
+    [HttpPost("updateMerchant"), CheckRoleAttribute]
+    public async Task<ActionResult<_updateMerchantRess>> UpdateMerchant([FromBody] _updateMerchantReq updateReq)
     {
         var currentUser = GetCurrentUserFromSession();
 
         if (currentUser.role != "Admin")
         {
-            return Unauthorized(new UpdateMerchantRes { type = "error", message = "Bu işlemi gerçekleştirmek için yetkiniz yok." });
+            return Unauthorized(new _updateMerchantRess { type = "error", message = "Bu işlemi gerçekleştirmek için yetkiniz yok." });
         }
 
-        var merchant = await _merchantCollection.Find<Merchant>(m => m.id == currentUser.id).FirstOrDefaultAsync();
+        var merchant = await _merchantCollection.Find<Merchant>(m => m.id == updateReq.id).FirstOrDefaultAsync();
 
         if (merchant == null)
         {
-            return NotFound(new UpdateMerchantRes { type = "error", message = "Güncellenmek istenen cari bulunamadı." });
+            return NotFound(new _updateMerchantRess { type = "error", message = "Güncellenmek istenen cari bulunamadı." });
         }
 
         merchant.title = updateReq.title;
 
         await _merchantCollection.ReplaceOneAsync(m => m.id == merchant.id, merchant);
 
-        return Ok(new UpdateMerchantRes { message = "Cari bilgisi güncellendi." });
+        return Ok(new _updateMerchantRess { message = "Cari bilgisi güncellendi." });
     }
 
     #endregion
 
     #region Get Merchant
-    [HttpGet("get-merchant"), CheckRoleAttribute]
-    public async Task<IActionResult> GetMerchant()
+
+    public class _getMerchantReq
+    {
+        [Required]
+        public string userId { get; set; }
+    }
+
+    public class _getMerchantRes
+    {
+        public string type { get; set; } // success / error
+        public string message { get; set; }
+        public List<Merchant> merchants { get; set; } = new List<Merchant>();
+    }
+
+    [HttpPost("getMerchant"), CheckRoleAttribute]
+    public async Task<ActionResult<_getMerchantRes>> GetMerchant([FromBody] _getMerchantReq request)
     {
         var currentUser = GetCurrentUserFromSession();
+        _getMerchantRes response = new _getMerchantRes();
+
+        FilterDefinition<Merchant> filter;
 
         if (currentUser.role == "Admin")
         {
-            var merchants = await _merchantCollection.Find(merchant => true).ToListAsync();
-            return Ok(merchants);
+            filter = Builders<Merchant>.Filter.Eq(m => m.userId, request.userId);
         }
         else
         {
-            var merchant = await _merchantCollection.Find<Merchant>(m => m.userId == currentUser.id).ToListAsync();
-            return Ok(merchant);
+            if (request.userId == currentUser.id)
+            {
+                filter = Builders<Merchant>.Filter.Eq(m => m.userId, currentUser.id);
+            }
+            else
+            {
+                response.type = "error";
+                response.message = "Bu işlemi gerçekleştirmek için yetkiniz yok.";
+                return Unauthorized(response);
+            }
         }
+
+        response.merchants = await _merchantCollection.Find(filter).ToListAsync();
+
+        if (response.merchants.Count == 0)
+        {
+            response.type = "error";
+            response.message = "Belirtilen userID ile ilişkilendirilmiş bir cari bulunamadı.";
+            return NotFound(response);
+        }
+
+        response.type = "success";
+        response.message = "İşlem başarılı.";
+        return Ok(response);
     }
 
     #endregion
 
     #region DeleteMerchant
 
-    public class DeleteMerchantReq
+    public class _deleteMerchantReq
     {
+        [Required]
         public string merchantId { get; set; }
     }
 
-    public class DeleteMerchantRes
+    public class _deleteMerchantRess
     {
+        [Required]
         public string type { get; set; } = "success";
         public string message { get; set; }
     }
 
-    [HttpPost("delete-merchant"), CheckRoleAttribute]
-    public async Task<IActionResult> DeleteMerchant([FromBody] DeleteMerchantReq deleteReq)
+    [HttpPost("deleteMerchant"), CheckRoleAttribute]
+    public async Task<ActionResult<_deleteMerchantRess>> DeleteMerchant([FromBody] _deleteMerchantReq deleteReq)
     {
         var currentUser = GetCurrentUserFromSession();
 
         if (currentUser.role != "Admin")
         {
-            return Unauthorized(new DeleteMerchantRes { type = "error", message = "Bu işlemi gerçekleştirmek için yetkiniz yok." });
+            return Unauthorized(new _deleteMerchantRess { type = "error", message = "Bu işlemi gerçekleştirmek için yetkiniz yok." });
         }
 
         var deleteResult = await _merchantCollection.DeleteOneAsync(m => m.id == deleteReq.merchantId);
 
         if (deleteResult.DeletedCount > 0)
         {
-            return Ok(new DeleteMerchantRes { message = "Cari kaydı silindi." });
+            return Ok(new _deleteMerchantRess { message = "Cari kaydı silindi." });
         }
 
-        return NotFound(new DeleteMerchantRes { type = "error", message = "Silmek istenen cari bulunamadı." });
+        return NotFound(new _deleteMerchantRess { type = "error", message = "Silmek istenen cari bulunamadı." });
     }
 
     #endregion
