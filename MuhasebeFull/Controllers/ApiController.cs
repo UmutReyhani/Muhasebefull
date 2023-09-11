@@ -308,7 +308,7 @@ namespace Muhasebe.Controllers
 
             _userCollection.ReplaceOne(u => u.id == userInDb.id, userInDb);
 
-            userFunctions.SetCurrentUserToSession(HttpContext,userInDb);
+            userFunctions.SetCurrentUserToSession(HttpContext, userInDb);
 
             return Ok(new _loginRes { type = "success", message = "Giriş Başarılı" });
         }
@@ -375,7 +375,33 @@ namespace Muhasebe.Controllers
 
         #endregion
 
+        #region addRestriction TESST
+        [HttpPost("addRestriction")]
+        public ActionResult AddRestriction(string userId, string restriction)
+        {
+            var _userCollection = _connectionService.db().GetCollection<User>("UserCollection");
+
+            var user = _userCollection.Find(u => u.id == userId).FirstOrDefault();
+            if (user == null)
+            {
+                return NotFound("Kullanıcı bulunamadı.");
+            }
+
+            if (user.Restrictions == null)
+            {
+                user.Restrictions = new List<string>();
+            }
+
+            if (!user.Restrictions.Contains(restriction))
+            {
+                user.Restrictions.Add(restriction);
+                var update = Builders<User>.Update.Set(u => u.Restrictions, user.Restrictions);
+                _userCollection.UpdateOne(u => u.id == userId, update);
+            }
+
+            return Ok("Kısıtlama başarıyla eklendi.");
+        }
+    
+        #endregion
     }
-
-
 }

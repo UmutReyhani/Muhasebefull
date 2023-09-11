@@ -21,46 +21,46 @@ public class FixedExpensesController : ControllerBase
         _connectionService = connectionService;
     }
 
-    #region FixedExpensesAdd
+    //#region FixedExpensesAdd
 
-    public class _addFixedExpensesReq
-    {
-        [Required]
-        public string title { get; set; }
-        public string? description { get; set; }
-        [BsonRepresentation(BsonType.Decimal128)]
-        [Required]
-        public decimal amount { get; set; }
-    }
+    //public class _addFixedExpensesReq
+    //{
+    //    [Required]
+    //    public string title { get; set; }
+    //    public string? description { get; set; }
+    //    [BsonRepresentation(BsonType.Decimal128)]
+    //    [Required]
+    //    public decimal amount { get; set; }
+    //}
 
-    public class _addFixedExpensesRes
-    {
-        [Required]
-        public string type { get; set; } = "success";
-        public string message { get; set; }
-    }
+    //public class _addFixedExpensesRes
+    //{
+    //    [Required]
+    //    public string type { get; set; } = "success";
+    //    public string message { get; set; }
+    //}
 
-    [HttpPost("addFixedExpenses"), CheckRoleAttribute]
-    public ActionResult<_addFixedExpensesRes> AddFixedExpenses([FromBody] _addFixedExpensesReq expensesReq)
-    {
-        var _fixedExpensesCollection = _connectionService.db().GetCollection<FixedExpenses>("FixedExpensesCollection");
-        var _accountingCollection = _connectionService.db().GetCollection<Accounting>("AccountingCollection");
-        var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
+    //[HttpPost("addFixedExpenses"), CheckRoleAttribute]
+    //public ActionResult<_addFixedExpensesRes> AddFixedExpenses([FromBody] _addFixedExpensesReq expensesReq)
+    //{
+    //    var _fixedExpensesCollection = _connectionService.db().GetCollection<FixedExpenses>("FixedExpensesCollection");
+    //    var _accountingCollection = _connectionService.db().GetCollection<Accounting>("AccountingCollection");
+    //    var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
 
-        FixedExpenses expenses = new FixedExpenses
-        {
-            title = expensesReq.title,
-            description = expensesReq.description,
-            amount = expensesReq.amount,
-            userId = currentUser.id
-        };
+    //    FixedExpenses expenses = new FixedExpenses
+    //    {
+    //        title = expensesReq.title,
+    //        description = expensesReq.description,
+    //        amount = expensesReq.amount,
+    //        userId = currentUser.id
+    //    };
 
-        _fixedExpensesCollection.InsertOne(expenses);
+    //    _fixedExpensesCollection.InsertOne(expenses);
 
-        return Ok(new _addFixedExpensesRes { message = "Sabit gider kaydı başarıyla oluşturuldu." });
-    }
+    //    return Ok(new _addFixedExpensesRes { message = "Sabit gider kaydı başarıyla oluşturuldu." });
+    //}
 
-    #endregion
+    //#endregion
 
     #region Get Fixed Expenses
 
@@ -207,5 +207,48 @@ public class FixedExpensesController : ControllerBase
         return Ok(new _deleteFixedExpenseRes { type = "success", message = "Sabit gider kaydı başarıyla silindi." });
     }
 
+    #endregion
+
+    #region TEST CONTROLLER
+    public class _addFixedExpensesReq
+    {
+        [Required]
+        public string title { get; set; }
+        public string? description { get; set; }
+        [BsonRepresentation(BsonType.Decimal128)]
+        [Required]
+        public decimal amount { get; set; }
+    }
+
+    public class _addFixedExpensesRes
+    {
+        [Required]
+        public string type { get; set; } = "success";
+        public string message { get; set; }
+    }
+    [HttpPost("addFixedExpenses"), CheckRoleAttribute]
+    public ActionResult<_addFixedExpensesRes> AddFixedExpenses([FromBody] _addFixedExpensesReq expensesReq)
+    {
+        var _fixedExpensesCollection = _connectionService.db().GetCollection<FixedExpenses>("FixedExpensesCollection");
+        var _accountingCollection = _connectionService.db().GetCollection<Accounting>("AccountingCollection");
+        var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
+
+        if (currentUser.Restrictions != null && currentUser.Restrictions.Contains("FixedExpenses.Add"))
+        {
+            return Unauthorized("Bu işlemi gerçekleştirmek için yetkiniz yok.");
+        }
+
+        FixedExpenses expenses = new FixedExpenses
+        {
+            title = expensesReq.title,
+            description = expensesReq.description,
+            amount = expensesReq.amount,
+            userId = currentUser.id
+        };
+
+        _fixedExpensesCollection.InsertOne(expenses);
+
+        return Ok(new _addFixedExpensesRes { message = "Sabit gider kaydı başarıyla oluşturuldu." });
+    }
     #endregion
 }
