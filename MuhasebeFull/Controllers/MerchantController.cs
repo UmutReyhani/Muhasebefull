@@ -12,7 +12,11 @@ using MuhasebeFull.Users;
 public class MerchantsController : ControllerBase
 {
     private readonly IConnectionService _connectionService;
-    
+
+    public MerchantsController(IConnectionService connectionService)
+    {
+        _connectionService = connectionService;
+    }
 
     #region AddMerchant
 

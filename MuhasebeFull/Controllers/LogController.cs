@@ -17,7 +17,10 @@ namespace MuhasebeFull.Controllers
     {
         private readonly IConnectionService _connectionService;
 
-        
+        public LogController(IConnectionService connectionService)
+        {
+            _connectionService = connectionService;
+        }
 
         #region Log Record all
         public class _getLogsReq

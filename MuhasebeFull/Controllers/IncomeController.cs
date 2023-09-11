@@ -14,8 +14,12 @@ using static MerchantsController;
 [Route("api/incomes")]
 public class IncomesController : ControllerBase
 {
-    private readonly IConnectionService _connectionService;    
+    private readonly IConnectionService _connectionService;
 
+    public IncomesController(IConnectionService connectionService)
+    {
+        _connectionService = connectionService;
+    }
     #region IncomeAdd
 
     public class _addIncomeReq

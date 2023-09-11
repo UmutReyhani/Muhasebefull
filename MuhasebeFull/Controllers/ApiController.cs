@@ -17,6 +17,10 @@ namespace Muhasebe.Controllers
     public class UserController : ControllerBase
     {
         private readonly IConnectionService _connectionService;
+        public UserController(IConnectionService connectionService)
+        {
+            _connectionService = connectionService;
+        }
 
 
         private string ComputeSha256Hash(string rawData)

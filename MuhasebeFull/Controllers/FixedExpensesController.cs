@@ -15,7 +15,11 @@ using MuhasebeFull.Users;
 public class FixedExpensesController : ControllerBase
 {
     private readonly IConnectionService _connectionService;
-    
+
+    public FixedExpensesController(IConnectionService connectionService)
+    {
+        _connectionService = connectionService;
+    }
 
     #region FixedExpensesAdd
 
