@@ -8,6 +8,7 @@ using MongoDB.Driver.Linq;
 using MuhasebeFull.Models;
 using System.ComponentModel.DataAnnotations;
 using MongoDB.Bson;
+using MuhasebeFull.Users;
 
 namespace Muhasebe.Controllers
 {
@@ -16,8 +17,6 @@ namespace Muhasebe.Controllers
     public class UserController : ControllerBase
     {
         private readonly IConnectionService _connectionService;
-        private IMongoCollection<User> _userCollection;
-        private IMongoCollection<Log> _logCollection;
 
 
         private string ComputeSha256Hash(string rawData)
@@ -34,31 +33,6 @@ namespace Muhasebe.Controllers
                 return builder.ToString();
             }
         }
-
-
-        public UserController(IConnectionService connectionService)
-        {
-            _connectionService = connectionService;
-            _userCollection = _connectionService.db().GetCollection<User>("UserCollection");
-            _logCollection = _connectionService.db().GetCollection<Log>("LogCollection");
-        }
-
-        #region UserSession
-        private void SetCurrentUserToSession(User user)
-        {
-            var userJson = JsonSerializer.Serialize(user);
-            HttpContext.Session.SetString("CurrentUser", userJson);
-        }
-
-        private User? GetCurrentUserFromSession()
-        {
-            var userJson = HttpContext.Session.GetString("CurrentUser");
-            if (string.IsNullOrEmpty(userJson))
-                return null;
-
-            return JsonSerializer.Deserialize<User>(userJson);
-        }
-        #endregion
 
         #region CreateUser
 
@@ -82,6 +56,8 @@ namespace Muhasebe.Controllers
         [HttpPost("createUser")]
         public ActionResult<_createUserRes> CreateUser([FromBody] _createUserReq data)
         {
+            var _userCollection = _connectionService.db().GetCollection<User>("UserCollection");
+
             if (data.role != "Admin" && data.role != "User")
                 return BadRequest(new _createUserRes { type = "error", message = "role can only be 'Admin' or 'User'." });
 
@@ -129,7 +105,8 @@ namespace Muhasebe.Controllers
         [HttpPost("getuserDetail"), CheckRoleAttribute]
         public async Task<ActionResult<_getUserDetailsRes>> GetUserDetails([FromBody] _getUserDetailsReq req)
         {
-            var currentUser = GetCurrentUserFromSession();
+            var _userCollection = _connectionService.db().GetCollection<User>("UserCollection").AsQueryable();
+            var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
             _getUserDetailsRes response = new _getUserDetailsRes();
 
             if (currentUser == null)
@@ -141,11 +118,10 @@ namespace Muhasebe.Controllers
 
             if (currentUser.role == "Admin")
             {
-                var total = (int?)await _userCollection.CountDocumentsAsync(new BsonDocument());
-                var users = await _userCollection.Find(user => true)
-                                                 .Skip((req.page - 1) * req.offset)
-                                                 .Limit(req.offset)
-                                                 .ToListAsync();
+                var total = _userCollection.Count();
+                var users = _userCollection.Skip((req.page - 1) * req.offset)
+                                           .Take(req.offset)
+                                           .ToList();
 
                 return Ok(new _getUserDetailsRes
                 {
@@ -157,7 +133,7 @@ namespace Muhasebe.Controllers
             }
             else if (currentUser.role == "User")
             {
-                var user = await _userCollection.Find<User>(u => u.id == currentUser.id).FirstOrDefaultAsync();
+                var user = _userCollection.FirstOrDefault(u => u.id == currentUser.id);
                 if (user == null)
                 {
                     response.type = "error";
@@ -198,42 +174,35 @@ namespace Muhasebe.Controllers
         }
 
         [HttpPost("updateUser"), CheckRoleAttribute]
-        public ActionResult<_updateUserRes> UpdateUser([FromBody] _updateUserReq data)
+        public async Task<ActionResult<_updateUserRes>> UpdateUser([FromBody] _updateUserReq req)
         {
-            var currentUser = GetCurrentUserFromSession();
+            var _userCollection = _connectionService.db().GetCollection<User>("UserCollection");
+            var _logCollection = _connectionService.db().GetCollection<Log>("LogCollection");
+            var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
 
-            var userToBeUpdated = _userCollection.Find<User>(u => u.id == data.id).FirstOrDefault();
+            var existingUser = await _userCollection.Find<User>(user => user.id == req.id).FirstOrDefaultAsync();
+            if (existingUser == null)
+                return NotFound(new _updateUserRes { type = "error", message = "Güncellenmek istenen kullanıcı bulunamadı." });
 
-            if (userToBeUpdated == null)
-            {
-                return NotFound("Güncellenmek istenen kullanıcı bulunamadı.");
-            }
+            if (currentUser.role == "User" && existingUser.id != currentUser.id)
+                return Unauthorized(new _updateUserRes { type = "error", message = "Sadece kendi bilgilerinizi güncelleyebilirsiniz." });
 
-            var oldValue = JsonSerializer.Serialize(userToBeUpdated);
+            var oldValue = JsonSerializer.Serialize(existingUser);
 
-            if (currentUser.role == "User")
-            {
-                if (currentUser.id != data.id)
-                {
-                    return Unauthorized("Sadece kendi şifrenizi güncelleyebilirsiniz.");
-                }
-                userToBeUpdated.password = ComputeSha256Hash(data.password);
-            }
-            else if (currentUser.role == "Admin")
-            {
-                userToBeUpdated.password = ComputeSha256Hash(data.password);
-            }
+            User updatedUser = existingUser;
+            updatedUser.password = ComputeSha256Hash(req.password);
 
-            _userCollection.ReplaceOne(u => u.id == currentUser.id, userToBeUpdated);
+            var update = Builders<User>.Update.Set(x => x.password, updatedUser.password);
+            await _userCollection.UpdateOneAsync(x => x.id == existingUser.id, update, new UpdateOptions { IsUpsert = false });
 
-            var newValue = JsonSerializer.Serialize(userToBeUpdated);
+            var newValue = JsonSerializer.Serialize(updatedUser);
 
             Log log = new Log
             {
                 userId = currentUser.id,
                 actionType = "Update",
                 target = "User",
-                itemId = userToBeUpdated.id,
+                itemId = updatedUser.id,
                 oldValue = oldValue,
                 newValue = newValue,
                 date = DateTime.UtcNow
@@ -263,7 +232,9 @@ namespace Muhasebe.Controllers
         [HttpPost("deleteUser"), CheckRoleAttribute]
         public ActionResult<_deleteUserRes> DeleteUser([FromBody] _deleteUserReq data)
         {
-            var currentUser = GetCurrentUserFromSession();
+            var _logCollection = _connectionService.db().GetCollection<Log>("LogCollection");
+            var _userCollection = _connectionService.db().GetCollection<User>("UserCollection");
+            var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
 
             var userToDelete = _userCollection.Find<User>(u => u.id == data.id).FirstOrDefault();
             if (userToDelete == null)
@@ -321,7 +292,7 @@ namespace Muhasebe.Controllers
             {
                 return BadRequest(new _loginRes { type = "error", message = "Kullanıcı adı veya şifre eksik." });
             }
-
+            var _userCollection = _connectionService.db().GetCollection<User>("UserCollection");
             var userInDb = _userCollection.Find<User>(u => u.username == loginData.username && u.password == ComputeSha256Hash(loginData.password)).FirstOrDefault();
 
             if (userInDb == null)
@@ -333,7 +304,7 @@ namespace Muhasebe.Controllers
 
             _userCollection.ReplaceOne(u => u.id == userInDb.id, userInDb);
 
-            SetCurrentUserToSession(userInDb);
+            userFunctions.SetCurrentUserToSession(HttpContext,userInDb);
 
             return Ok(new _loginRes { type = "success", message = "Giriş Başarılı" });
         }
@@ -358,7 +329,9 @@ namespace Muhasebe.Controllers
         [HttpPost("userStatus")]
         public ActionResult<_userstatusRes> Userstatus([FromBody] _userstatusReq statusData)
         {
-            var currentUser = GetCurrentUserFromSession();
+            var _userCollection = _connectionService.db().GetCollection<User>("UserCollection");
+            var _logCollection = _connectionService.db().GetCollection<Log>("LogCollection");
+            var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
 
             if (currentUser.role != "Admin")
             {

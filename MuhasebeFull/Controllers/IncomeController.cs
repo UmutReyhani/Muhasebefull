@@ -8,38 +8,13 @@ using MuhasebeFull.Models;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using Muhasebe.Models;
+using MuhasebeFull.Users;
+using static MerchantsController;
 
 [Route("api/incomes")]
 public class IncomesController : ControllerBase
 {
-    private readonly IConnectionService _connectionService;
-    private IMongoCollection<Income> _incomeCollection;
-    private IMongoCollection<Accounting> _accountingCollection;
-
-    public IncomesController(IConnectionService connectionService)
-    {
-        _connectionService = connectionService;
-        _incomeCollection = _connectionService.db().GetCollection<Income>("IncomeCollection");
-        _accountingCollection = _connectionService.db().GetCollection<Accounting>("AccountingCollection");
-
-    }
-
-    #region UserSession
-    private void SetCurrentUserToSession(User user)
-    {
-        var userJson = JsonSerializer.Serialize(user);
-        HttpContext.Session.SetString("CurrentUser", userJson);
-    }
-
-    private User? GetCurrentUserFromSession()
-    {
-        var userJson = HttpContext.Session.GetString("CurrentUser");
-        if (string.IsNullOrEmpty(userJson))
-            return null;
-
-        return JsonSerializer.Deserialize<User>(userJson);
-    }
-    #endregion
+    private readonly IConnectionService _connectionService;    
 
     #region IncomeAdd
 
@@ -63,7 +38,8 @@ public class IncomesController : ControllerBase
     [HttpPost("addIncome"), CheckRoleAttribute]
     public ActionResult<_addIncomeRes> AddIncome([FromBody] _addIncomeReq incomeReq)
     {
-        var currentUser = GetCurrentUserFromSession();
+        var _incomeCollection = _connectionService.db().GetCollection<Income>("IncomeCollection");
+        var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
 
         if (currentUser == null)
         {
@@ -105,36 +81,29 @@ public class IncomesController : ControllerBase
         public string message { get; set; }
     }
 
-    [HttpPost("updateIncome"), CheckRoleAttribute]
-    public async Task<ActionResult<_updateIncomeRes>> UpdateIncome([FromBody] _updateIncomeReq req)
+    [HttpPost("updateMerchant"), CheckRoleAttribute]
+    public async Task<ActionResult<_updateMerchantRess>> UpdateMerchant([FromBody] _updateMerchantReq req)
     {
-        var currentUser = GetCurrentUserFromSession();
+        var _merchantCollection = _connectionService.db().GetCollection<Merchant>("MerchantCollection");
+        var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
 
-        var existingIncome = await _incomeCollection.Find<Income>(income => income.id == currentUser.id).FirstOrDefaultAsync();
+        var existingMerchant = await _merchantCollection.Find<Merchant>(m => m.id == currentUser.id).FirstOrDefaultAsync();
 
-        if (existingIncome == null)
+        if (existingMerchant == null)
         {
-            return NotFound(new _updateIncomeRes { type = "error", message = "Gelir kaydı bulunamadı." });
+            return NotFound(new _updateMerchantRess { type = "error", message = "Cari kaydı bulunamadı." });
         }
 
-        if (currentUser.role != "Admin" && existingIncome.userId != currentUser.id)
+        if (currentUser.role != "Admin" && existingMerchant.userId != currentUser.id)
         {
-            return Unauthorized(new _updateIncomeRes { type = "error", message = "Bu gelir kaydını güncelleme yetkiniz yok." });
+            return Unauthorized(new _updateMerchantRess { type = "error", message = "Bu cari kaydını güncelleme yetkiniz yok." });
         }
 
-        var update = Builders<Income>.Update
-            .Set(x => x.title, req.title)
-            .Set(x => x.amount, req.amount);
+        var update = Builders<Merchant>.Update.Set(m => m.title, req.title);
 
+        await _merchantCollection.UpdateOneAsync(m => m.id == existingMerchant.id, update, new UpdateOptions { IsUpsert = false });
 
-        if (!string.IsNullOrEmpty(req.description ?? ""))
-        {
-            update = update.Set(x => x.description, req.description);
-        }
-
-        await _incomeCollection.UpdateOneAsync(x => x.id == existingIncome.id, update, new UpdateOptions { IsUpsert = false });
-
-        return Ok(new _updateIncomeRes { message = "Gelir kaydı başarıyla güncellendi." });
+        return Ok(new _updateMerchantRess { message = "Cari bilgisi başarıyla güncellendi." });
     }
 
     #endregion
@@ -160,7 +129,8 @@ public class IncomesController : ControllerBase
     [HttpPost("getIncome"), CheckRoleAttribute]
     public async Task<ActionResult<_getIncomeRes>> GetIncome([FromBody] _incomeFilterRequest req)
     {
-        var currentUser = GetCurrentUserFromSession();
+        var _incomeCollection = _connectionService.db().GetCollection<Income>("IncomeCollection");
+        var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
 
         if (currentUser == null)
         {
@@ -209,7 +179,8 @@ public class IncomesController : ControllerBase
     [HttpPost("deleteIncome"), CheckRoleAttribute]
     public async Task<ActionResult<_deleteIncomeRes>> DeleteIncome([FromBody] _deleteIncomeReq data)
     {
-        var currentUser = GetCurrentUserFromSession();
+        var _incomeCollection = _connectionService.db().GetCollection<Income>("IncomeCollection");
+        var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
 
         if (currentUser.role != "Admin")
         {

@@ -7,6 +7,7 @@ using Muhasebe.Attributes;
 using MongoDB.Driver.Linq;
 using MuhasebeFull.Models;
 using System.ComponentModel.DataAnnotations;
+using MuhasebeFull.Users;
 
 namespace MuhasebeFull.Controllers
 {
@@ -15,32 +16,8 @@ namespace MuhasebeFull.Controllers
     public class LogController : ControllerBase
     {
         private readonly IConnectionService _connectionService;
-        private IMongoCollection<Log> _logCollection;
 
-        public LogController(IConnectionService connectionService)
-        {
-            _connectionService = connectionService;
-            _logCollection = _connectionService.db().GetCollection<Log>("LogCollection");
-        }
-
-        #region UserSession
-
-        private void SetCurrentUserToSession(User user)
-        {
-            var userJson = JsonSerializer.Serialize(user);
-            HttpContext.Session.SetString("CurrentUser", userJson);
-        }
-
-        private User? GetCurrentUserFromSession()
-        {
-            var userJson = HttpContext.Session.GetString("CurrentUser");
-            if (string.IsNullOrEmpty(userJson))
-                return null;
-
-            return JsonSerializer.Deserialize<User>(userJson);
-        }
-
-        #endregion
+        
 
         #region Log Record all
         public class _getLogsReq
@@ -61,7 +38,8 @@ namespace MuhasebeFull.Controllers
         [HttpPost("[action]"), CheckRoleAttribute]
         public ActionResult<_getLogsRes> getLogs([FromBody] _getLogsReq req)
         {
-            var currentUser = GetCurrentUserFromSession();
+            var _logCollection = _connectionService.db().GetCollection<Log>("LogCollection");
+            var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
             if (currentUser == null)
                 return Ok(new _getLogsRes { type = "error", message = "Oturum bilgisi bulunamadı." });
 
@@ -112,7 +90,8 @@ namespace MuhasebeFull.Controllers
         [HttpPost("logrecordfilter"), CheckRoleAttribute]
         public ActionResult<_logsRes> GetLogs([FromBody] _logRequest request, int pageSize = 20, int pageNumber = 1)
         {
-            var currentUser = GetCurrentUserFromSession();
+            var _logCollection = _connectionService.db().GetCollection<Log>("LogCollection");
+            var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
             if (currentUser == null)
                 return Unauthorized("Oturum bilgisi bulunamadı.");
 

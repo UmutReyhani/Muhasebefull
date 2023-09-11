@@ -8,45 +8,17 @@ using Muhasebe.Services;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using MuhasebeFull.Models;
-using Microsoft.AspNetCore.Server.Kestrel.Core.Features;
-using Microsoft.AspNetCore.Identity;
+using MuhasebeFull.Users;
 
 [Route("api/accounting")]
 public class AccountingController : ControllerBase
 {
     private readonly IConnectionService _connectionService;
-    private IMongoCollection<Accounting> _accountingCollection;
-    private IMongoCollection<Log> _logCollection;
-    private IMongoCollection<FixedExpenses> _fixedExpensesCollection;
-    private IMongoCollection<Income> _incomeCollection;
-    private IMongoCollection<Merchant> _merchantCollection;
 
     public AccountingController(IConnectionService connectionService)
     {
         _connectionService = connectionService;
-        _accountingCollection = _connectionService.db().GetCollection<Accounting>("AccountingCollection");
-        _logCollection = _connectionService.db().GetCollection<Log>("LogCollection");
-        _fixedExpensesCollection = _connectionService.db().GetCollection<FixedExpenses>("FixedExpensesCollection");
-        _incomeCollection = _connectionService.db().GetCollection<Income>("IncomeCollection");
-        _merchantCollection = _connectionService.db().GetCollection<Merchant>("MerchantCollection");
     }
-
-    #region UserSession
-    private void SetCurrentUserToSession(User user)
-    {
-        var userJson = JsonSerializer.Serialize(user);
-        HttpContext.Session.SetString("CurrentUser", userJson);
-    }
-
-    private User? GetCurrentUserFromSession()
-    {
-        var userJson = HttpContext.Session.GetString("CurrentUser");
-        if (string.IsNullOrEmpty(userJson))
-            return null;
-
-        return JsonSerializer.Deserialize<User>(userJson);
-    }
-    #endregion
 
     #region AccountingADD
 
@@ -72,7 +44,9 @@ public class AccountingController : ControllerBase
     [HttpPost("addRecord"), CheckRoleAttribute]
     public ActionResult<_addAccountingRecordRes> AddAccountingRecord([FromBody] _addAccountingRecordReq recordReq)
     {
-        var currentUser = GetCurrentUserFromSession();
+        var _accountingCollection = _connectionService.db().GetCollection<Accounting>("AccountingCollection");
+        var _logCollection = _connectionService.db().GetCollection<Log>("LogCollection");
+        var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
 
         if (string.IsNullOrEmpty(recordReq.type) || (recordReq.type != "Gelir" && recordReq.type != "Gider"))
             return BadRequest(new _addAccountingRecordRes { type = "error", message = "Type sadece 'Gelir' ya da 'Gider' olabilir." });
@@ -126,7 +100,8 @@ public class AccountingController : ControllerBase
     [HttpPost("getRecords"), CheckRoleAttribute]
     public ActionResult<_getAccountingRecordRes> GetAccountingRecords([FromBody] _accountingRecordReq req)
     {
-        var currentUser = GetCurrentUserFromSession();
+        var _accountingCollection = _connectionService.db().GetCollection<Accounting>("AccountingCollection");
+        var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
 
 
         if (!string.IsNullOrEmpty(req.type) && (req.type != "Gelir" | req.type != "Gider"))
@@ -181,10 +156,11 @@ public class AccountingController : ControllerBase
 
     [HttpPost("updateRecord"), CheckRoleAttribute]
     public async Task<ActionResult<_updateAccountingRecordRes>> UpdateAccountingRecord([FromBody] _updateAccountingRecordReq updateReq)
-
     {
-        var currentUser = GetCurrentUserFromSession();
-        var existingRecord = await _accountingCollection.Find<Accounting>(r => r.id == updateReq.id).FirstOrDefaultAsync();
+        var _accountingCollection = _connectionService.db().GetCollection<Accounting>("AccountingCollection");
+        var _logCollection = _connectionService.db().GetCollection<Log>("LogCollection");
+        var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
+        var existingRecord = _accountingCollection.AsQueryable().FirstOrDefault(r => r.id == updateReq.id);
 
         if (existingRecord == null)
             return NotFound(new _updateAccountingRecordRes { type = "error", message = "Güncellenmek istenen finansal kayıt bulunamadı." });
@@ -198,7 +174,12 @@ public class AccountingController : ControllerBase
         existingRecord.currency = updateReq.currency;
         existingRecord.type = updateReq.type;
 
-        await _accountingCollection.UpdateOneAsync(x => x.id == existingRecord.id, Builders<Accounting>.Update.Set(x => x.amount, updateReq.amount).Set(x => x.currency, updateReq.currency).Set(x => x.type, updateReq.type), new UpdateOptions { IsUpsert = false });
+        var update = Builders<Accounting>.Update
+            .Set(r => r.amount, existingRecord.amount)
+            .Set(r => r.currency, existingRecord.currency)
+            .Set(r => r.type, existingRecord.type);
+
+        await _accountingCollection.UpdateOneAsync(r => r.id == existingRecord.id, update);
 
         string newValue = JsonSerializer.Serialize(existingRecord);
 
@@ -216,6 +197,7 @@ public class AccountingController : ControllerBase
 
         return Ok(new _updateAccountingRecordRes { message = "Finansal kayıt başarıyla güncellendi." });
     }
+
 
     #endregion
 
@@ -237,7 +219,10 @@ public class AccountingController : ControllerBase
     [HttpPost("deleteRecord"), CheckRoleAttribute]
     public async Task<ActionResult<_deleteRecordRes>> DeleteRecord([FromBody] _deleteRecordReq data)
     {
-        var currentUser = GetCurrentUserFromSession();
+        var _accountingCollection = _connectionService.db().GetCollection<Accounting>("AccountingCollection");
+        var _logCollection = _connectionService.db().GetCollection<Log>("LogCollection");
+
+        var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
 
         var existingRecord = await _accountingCollection.Find<Accounting>(r => r.id == data.id).FirstOrDefaultAsync();
 
@@ -292,34 +277,36 @@ public class AccountingController : ControllerBase
     [HttpPost("accountingReports"), CheckRoleAttribute]
     public ActionResult<_accReportsRes> GetAccountingSummary([FromBody] _accReportsReq data)
     {
-        var filterBuilder = Builders<Accounting>.Filter;
-        var filter = filterBuilder.Empty;
-        var currentUser = GetCurrentUserFromSession();
+        var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
+
+        IQueryable<Accounting> accountingQuery = _connectionService.db().GetCollection<Accounting>("AccountingCollection").AsQueryable();
+        IQueryable<FixedExpenses> fixedExpensesQuery = _connectionService.db().GetCollection<FixedExpenses>("FixedExpensesCollection").AsQueryable();
 
         if (!string.IsNullOrEmpty(data.userId))
         {
-            filter = filter & filterBuilder.Eq(a => a.userId, data.userId);
+            accountingQuery = accountingQuery.Where(a => a.userId == data.userId);
         }
 
         if (!string.IsNullOrEmpty(data.merchantId))
         {
-            filter = filter & filterBuilder.Eq(a => a.merchantId, data.merchantId);
+            accountingQuery = accountingQuery.Where(a => a.merchantId == data.merchantId);
         }
+
         if (!string.IsNullOrEmpty(data.incomeId))
         {
-            filter = filter & filterBuilder.Eq(a => a.incomeId, data.incomeId);
+            accountingQuery = accountingQuery.Where(a => a.incomeId == data.incomeId);
         }
 
         if (!string.IsNullOrEmpty(data.fixedExpensesId))
         {
-            filter = filter & filterBuilder.Eq(a => a.fixedExpensesId, data.fixedExpensesId);
+            accountingQuery = accountingQuery.Where(a => a.fixedExpensesId == data.fixedExpensesId);
         }
 
-        var dateFilter = _accountingCollection.Find(filter).ToList();
+        var dateFilteredData = accountingQuery.ToList();
 
-        var totalFixedExpenses = _fixedExpensesCollection.AsQueryable().Sum(f => f.amount);
-        var gelir = dateFilter.Where(x => x.type == "Gelir").Sum(x => x.amount);
-        var gider = dateFilter.Where(x => x.type == "Gider").Sum(x => x.amount);
+        var totalFixedExpenses = fixedExpensesQuery.Sum(f => f.amount);
+        var gelir = dateFilteredData.Where(x => x.type == "Gelir").Sum(x => x.amount);
+        var gider = dateFilteredData.Where(x => x.type == "Gider").Sum(x => x.amount);
         var bakiye = gelir - gider;
 
         return Ok(new _accReportsRes
@@ -330,7 +317,6 @@ public class AccountingController : ControllerBase
             message = "Rapor başarıyla oluşturuldu."
         });
     }
-
     #endregion
 
 }

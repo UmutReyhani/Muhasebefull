@@ -1,7 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Mvc;
-using Muhasebe.Models;
-using System.Text.Json;
+
 
 namespace Muhasebe.Attributes
 {
@@ -9,7 +8,7 @@ namespace Muhasebe.Attributes
     {
         public void OnAuthorization(AuthorizationFilterContext context)
         {
-            var userJson = context.HttpContext.Session.GetString("CurrentUser");
+            var userJson = context.HttpContext.Session.GetString("id");
             if (string.IsNullOrEmpty(userJson))
             {
                 context.Result = new StatusCodeResult(401);

@@ -6,35 +6,13 @@ using MuhasebeFull.Models;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using Muhasebe.Models;
+using MuhasebeFull.Users;
 
 [Route("api/merchants")]
 public class MerchantsController : ControllerBase
 {
     private readonly IConnectionService _connectionService;
-    private IMongoCollection<Merchant> _merchantCollection;
-
-    public MerchantsController(IConnectionService connectionService)
-    {
-        _connectionService = connectionService;
-        _merchantCollection = _connectionService.db().GetCollection<Merchant>("MerchantCollection");
-    }
-
-    #region UserSession
-    private void SetCurrentUserToSession(User user)
-    {
-        var userJson = JsonSerializer.Serialize(user);
-        HttpContext.Session.SetString("CurrentUser", userJson);
-    }
-
-    private User? GetCurrentUserFromSession()
-    {
-        var userJson = HttpContext.Session.GetString("CurrentUser");
-        if (string.IsNullOrEmpty(userJson))
-            return null;
-
-        return JsonSerializer.Deserialize<User>(userJson);
-    }
-    #endregion
+    
 
     #region AddMerchant
 
@@ -54,8 +32,8 @@ public class MerchantsController : ControllerBase
     [HttpPost("addMerchant"), CheckRoleAttribute]
     public ActionResult<_addMerchantRess> AddMerchant([FromBody] _addMerchantReq merchantReq)
     {
-        var currentUser = GetCurrentUserFromSession();
-
+        var _merchantCollection = _connectionService.db().GetCollection<Merchant>("MerchantCollection");
+        var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
         if (currentUser == null)
             return Unauthorized(new _addMerchantRess { type = "error", message = "Yetkisiz erişim." });
 
@@ -93,7 +71,8 @@ public class MerchantsController : ControllerBase
     [HttpPost("updateMerchant"), CheckRoleAttribute]
     public async Task<ActionResult<_updateMerchantRess>> UpdateMerchant([FromBody] _updateMerchantReq updateReq)
     {
-        var currentUser = GetCurrentUserFromSession();
+        var _merchantCollection = _connectionService.db().GetCollection<Merchant>("MerchantCollection");
+        var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
 
         if (currentUser.role != "Admin")
         {
@@ -134,7 +113,8 @@ public class MerchantsController : ControllerBase
     [HttpPost("getMerchant"), CheckRoleAttribute]
     public async Task<ActionResult<_getMerchantRes>> GetMerchant([FromBody] _getMerchantReq request)
     {
-        var currentUser = GetCurrentUserFromSession();
+        var _merchantCollection = _connectionService.db().GetCollection<Merchant>("MerchantCollection");
+        var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
         _getMerchantRes response = new _getMerchantRes();
 
         FilterDefinition<Merchant> filter;
@@ -191,7 +171,8 @@ public class MerchantsController : ControllerBase
     [HttpPost("deleteMerchant"), CheckRoleAttribute]
     public async Task<ActionResult<_deleteMerchantRess>> DeleteMerchant([FromBody] _deleteMerchantReq deleteReq)
     {
-        var currentUser = GetCurrentUserFromSession();
+        var _merchantCollection = _connectionService.db().GetCollection<Merchant>("MerchantCollection");
+        var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
 
         if (currentUser.role != "Admin")
         {

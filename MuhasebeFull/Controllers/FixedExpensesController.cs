@@ -9,37 +9,13 @@ using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using static AccountingController;
 using Muhasebe.Models;
+using MuhasebeFull.Users;
 
 [Route("api/fixedexpenses")]
 public class FixedExpensesController : ControllerBase
 {
     private readonly IConnectionService _connectionService;
-    private IMongoCollection<FixedExpenses> _fixedExpensesCollection;
-    private IMongoCollection<Accounting> _accountingCollection;
-
-    public FixedExpensesController(IConnectionService connectionService)
-    {
-        _connectionService = connectionService;
-        _fixedExpensesCollection = _connectionService.db().GetCollection<FixedExpenses>("FixedExpensesCollection");
-        _accountingCollection = _connectionService.db().GetCollection<Accounting>("AccountingCollection");
-    }
-
-    #region UserSession
-    private void SetCurrentUserToSession(User user)
-    {
-        var userJson = JsonSerializer.Serialize(user);
-        HttpContext.Session.SetString("CurrentUser", userJson);
-    }
-
-    private User? GetCurrentUserFromSession()
-    {
-        var userJson = HttpContext.Session.GetString("CurrentUser");
-        if (string.IsNullOrEmpty(userJson))
-            return null;
-
-        return JsonSerializer.Deserialize<User>(userJson);
-    }
-    #endregion
+    
 
     #region FixedExpensesAdd
 
@@ -63,7 +39,9 @@ public class FixedExpensesController : ControllerBase
     [HttpPost("addFixedExpenses"), CheckRoleAttribute]
     public ActionResult<_addFixedExpensesRes> AddFixedExpenses([FromBody] _addFixedExpensesReq expensesReq)
     {
-        var currentUser = GetCurrentUserFromSession();
+        var _fixedExpensesCollection = _connectionService.db().GetCollection<FixedExpenses>("FixedExpensesCollection");
+        var _accountingCollection = _connectionService.db().GetCollection<Accounting>("AccountingCollection");
+        var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
 
         FixedExpenses expenses = new FixedExpenses
         {
@@ -102,7 +80,9 @@ public class FixedExpensesController : ControllerBase
     [HttpPost("getFixedExpenses"), CheckRoleAttribute]
     public async Task<ActionResult<_getFixedExpensesRes>> GetFixedExpenses([FromBody] _getFixedExpensesReq req)
     {
-        var currentUser = GetCurrentUserFromSession();
+        var _fixedExpensesCollection = _connectionService.db().GetCollection<FixedExpenses>("FixedExpensesCollection");
+        var _accountingCollection = _connectionService.db().GetCollection<Accounting>("AccountingCollection");
+        var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
 
         if (currentUser == null)
             return Ok(new _getFixedExpensesRes { type = "error", message = "Oturum bilgisi bulunamadı." });
@@ -137,11 +117,6 @@ public class FixedExpensesController : ControllerBase
     }
     #endregion
 
-
-
-
-
-
     #region UpdateFixedExpenses
 
     public class _updateFixedExpensesReq
@@ -166,7 +141,9 @@ public class FixedExpensesController : ControllerBase
     [HttpPost("updateFixedExpenses"), CheckRoleAttribute]
     public async Task<ActionResult<_updateFixedExpensesRes>> UpdateFixedExpenses([FromBody] _updateFixedExpensesReq req)
     {
-        var currentUser = GetCurrentUserFromSession();
+        var _fixedExpensesCollection = _connectionService.db().GetCollection<FixedExpenses>("FixedExpensesCollection");
+        var _accountingCollection = _connectionService.db().GetCollection<Accounting>("AccountingCollection");
+        var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
 
         var existingExpense = await _fixedExpensesCollection.Find<FixedExpenses>(expense => expense.id == currentUser.id).FirstOrDefaultAsync();
         if (existingExpense == null)
@@ -210,7 +187,9 @@ public class FixedExpensesController : ControllerBase
     [HttpPost("deleteFixedExpenses"), CheckRoleAttribute]
     public async Task<ActionResult<_deleteFixedExpenseRes>> DeleteFixedExpenses([FromBody] _deleteFixedExpenseReq data)
     {
-        var currentUser = GetCurrentUserFromSession();
+        var _fixedExpensesCollection = _connectionService.db().GetCollection<FixedExpenses>("FixedExpensesCollection");
+        var _accountingCollection = _connectionService.db().GetCollection<Accounting>("AccountingCollection");
+        var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
 
         var existingExpense = await _fixedExpensesCollection.Find<FixedExpenses>(expense => expense.id == data.id).FirstOrDefaultAsync();
         if (existingExpense == null)
