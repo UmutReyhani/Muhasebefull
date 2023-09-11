@@ -73,8 +73,7 @@ public class MerchantsController : ControllerBase
 
     #endregion
 
-    #region UpdateMerchant
-
+    #region Update Merchant
     public class _updateMerchantReq
     {
         [Required]
@@ -101,16 +100,16 @@ public class MerchantsController : ControllerBase
             return Unauthorized(new _updateMerchantRess { type = "error", message = "Bu işlemi gerçekleştirmek için yetkiniz yok." });
         }
 
-        var merchant = await _merchantCollection.Find<Merchant>(m => m.id == updateReq.id).FirstOrDefaultAsync();
+        var existingMerchant = await _merchantCollection.Find<Merchant>(m => m.id == updateReq.id).FirstOrDefaultAsync();
 
-        if (merchant == null)
+        if (existingMerchant == null)
         {
             return NotFound(new _updateMerchantRess { type = "error", message = "Güncellenmek istenen cari bulunamadı." });
         }
 
-        merchant.title = updateReq.title;
+        var update = Builders<Merchant>.Update.Set(m => m.title, updateReq.title);
 
-        await _merchantCollection.ReplaceOneAsync(m => m.id == merchant.id, merchant);
+        await _merchantCollection.UpdateOneAsync(m => m.id == existingMerchant.id, update, new UpdateOptions { IsUpsert = false });
 
         return Ok(new _updateMerchantRess { message = "Cari bilgisi güncellendi." });
     }
@@ -163,7 +162,7 @@ public class MerchantsController : ControllerBase
         if (response.merchants.Count == 0)
         {
             response.type = "error";
-            response.message = "Belirtilen userID ile ilişkilendirilmiş bir cari bulunamadı.";
+            response.message = "Belirtilen userId ile ilişkilendirilmiş bir cari bulunamadı.";
             return NotFound(response);
         }
 
@@ -179,7 +178,7 @@ public class MerchantsController : ControllerBase
     public class _deleteMerchantReq
     {
         [Required]
-        public string merchantId { get; set; }
+        public string id { get; set; }
     }
 
     public class _deleteMerchantRess
@@ -199,7 +198,7 @@ public class MerchantsController : ControllerBase
             return Unauthorized(new _deleteMerchantRess { type = "error", message = "Bu işlemi gerçekleştirmek için yetkiniz yok." });
         }
 
-        var deleteResult = await _merchantCollection.DeleteOneAsync(m => m.id == deleteReq.merchantId);
+        var deleteResult = await _merchantCollection.DeleteOneAsync(m => m.id == deleteReq.id);
 
         if (deleteResult.DeletedCount > 0)
         {

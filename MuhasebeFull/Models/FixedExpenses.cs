@@ -6,6 +6,8 @@ namespace MuhasebeFull.Models
 {
     public class FixedExpenses
     {
+        internal string currency;
+
         [BsonId]
         [BsonRepresentation(BsonType.ObjectId)]
         public string id { get; set; }

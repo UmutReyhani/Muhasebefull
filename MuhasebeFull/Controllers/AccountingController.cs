@@ -119,47 +119,34 @@ public class AccountingController : ControllerBase
         public long? total { get; set; }
         public List<Accounting>? data { get; set; }
         [Required]
-        public string responseType { get; set; } = "success";
+        public string type { get; set; } = "success";
         public string? message { get; set; }
     }
 
     [HttpPost("getRecords"), CheckRoleAttribute]
-    public async Task<ActionResult<_getAccountingRecordRes>> GetAccountingRecords([FromBody] _accountingRecordReq req)
+    public ActionResult<_getAccountingRecordRes> GetAccountingRecords([FromBody] _accountingRecordReq req)
     {
         var currentUser = GetCurrentUserFromSession();
 
-        var filterBuilder = Builders<Accounting>.Filter;
-        FilterDefinition<Accounting> filter = filterBuilder.Empty;
 
-        if (!string.IsNullOrEmpty(req.userId))
+        if (!string.IsNullOrEmpty(req.type) && (req.type != "Gelir" | req.type != "Gider"))
         {
-            filter = filter & filterBuilder.Eq(a => a.userId, req.userId);
+            return Ok(new _getAccountingRecordRes { type = "error", message = "" });
         }
 
-        if (!string.IsNullOrEmpty(req.type) && (req.type == "Gelir" || req.type == "Gider"))
-        {
-            filter = filter & filterBuilder.Eq(a => a.type, req.type);
-        }
+        var query = _accountingCollection.AsQueryable()
+            .Where(x =>
+                (string.IsNullOrEmpty(req.userId) | (!string.IsNullOrEmpty(req.userId) && x.userId == req.userId))
+                & (string.IsNullOrEmpty(req.type) | (!string.IsNullOrEmpty(req.type) && x.type == req.type))
+                & (currentUser.role == "Admin" | (currentUser.role != "Admin" && req.userId == currentUser.id))
+            );
 
-        if (currentUser.role.ToString() == "Admin" && !string.IsNullOrEmpty(req.userId))
-        {
-            filter = filter;
-        }
-        else if (currentUser.role.ToString() == "User")
-        {
-            filter = filter & filterBuilder.Eq(a => a.userId, currentUser.id);
-        }
-        else
-        {
-            return Ok(new _getAccountingRecordRes { responseType = "error", message = "Bu işlemi gerçekleştirmek için yetkiniz yok." });
-        }
 
-        var total = await _accountingCollection.Find(filter).CountDocumentsAsync();
-        var records = await _accountingCollection.Find(filter)
+        var total = query.Count();
+        var records = query
                             .Skip((req.page - 1) * req.offset)
-                            .Limit(req.offset)
-                            .ToListAsync();
-
+                            .Take(req.offset)
+                            .ToList();
         return Ok(new _getAccountingRecordRes
         {
             total = total,
@@ -174,6 +161,8 @@ public class AccountingController : ControllerBase
 
     public class _updateAccountingRecordReq
     {
+        [Required]
+        public string id { get; set; }
         [Required]
         public string type { get; set; }
         [BsonRepresentation(BsonType.Decimal128)]
@@ -195,7 +184,7 @@ public class AccountingController : ControllerBase
 
     {
         var currentUser = GetCurrentUserFromSession();
-        var existingRecord = await _accountingCollection.Find<Accounting>(r => r.id == currentUser.id).FirstOrDefaultAsync();
+        var existingRecord = await _accountingCollection.Find<Accounting>(r => r.id == updateReq.id).FirstOrDefaultAsync();
 
         if (existingRecord == null)
             return NotFound(new _updateAccountingRecordRes { type = "error", message = "Güncellenmek istenen finansal kayıt bulunamadı." });
@@ -209,7 +198,7 @@ public class AccountingController : ControllerBase
         existingRecord.currency = updateReq.currency;
         existingRecord.type = updateReq.type;
 
-        await _accountingCollection.ReplaceOneAsync(r => r.id == currentUser.id, existingRecord);
+        await _accountingCollection.UpdateOneAsync(x => x.id == existingRecord.id, Builders<Accounting>.Update.Set(x => x.amount, updateReq.amount).Set(x => x.currency, updateReq.currency).Set(x => x.type, updateReq.type), new UpdateOptions { IsUpsert = false });
 
         string newValue = JsonSerializer.Serialize(existingRecord);
 

@@ -89,7 +89,7 @@ namespace MuhasebeFull.Controllers
 
         #endregion
 
-        #region Log Responses and Requests
+        #region Log FILTER
 
         public class _logsRes
         {

@@ -86,7 +86,8 @@ public class FixedExpensesController : ControllerBase
     {
         public int page { get; set; } = 1;
         public int offset { get; set; } = 20;
-        public string? userId { get; set; }
+
+        public string userId { get; set; }
     }
 
     public class _getFixedExpensesRes
@@ -118,9 +119,7 @@ public class FixedExpensesController : ControllerBase
             filter = filterBuilder.Eq(e => e.userId, currentUser.id);
         }
         else
-        {
-            return Ok(new _getFixedExpensesRes { type = "error", message = "yetkisiz işlem." });
-        }
+            filter = filterBuilder.Empty;
 
         var total = await _fixedExpensesCollection.Find(filter).CountDocumentsAsync();
         var expenses = await _fixedExpensesCollection.Find(filter)
@@ -149,6 +148,8 @@ public class FixedExpensesController : ControllerBase
     {
         [Required]
         public string title { get; set; }
+        [Required]
+        public string currency { get; set; }
         public string? description { get; set; }
         [BsonRepresentation(BsonType.Decimal128)]
         [Required]
@@ -163,7 +164,7 @@ public class FixedExpensesController : ControllerBase
     }
 
     [HttpPost("updateFixedExpenses"), CheckRoleAttribute]
-    public async Task<ActionResult<_updateFixedExpensesRes>> UpdateFixedExpenses([FromBody] _updateFixedExpensesReq expensesReq)
+    public async Task<ActionResult<_updateFixedExpensesRes>> UpdateFixedExpenses([FromBody] _updateFixedExpensesReq req)
     {
         var currentUser = GetCurrentUserFromSession();
 
@@ -175,11 +176,16 @@ public class FixedExpensesController : ControllerBase
             return Unauthorized(new _updateFixedExpensesRes { type = "error", message = "Bu gideri güncelleme yetkiniz yok." });
 
         FixedExpenses updatedExpense = existingExpense;
-        updatedExpense.title = expensesReq.title;
-        updatedExpense.description = expensesReq.description;
-        updatedExpense.amount = expensesReq.amount;
-
-        await _fixedExpensesCollection.ReplaceOneAsync(expense => expense.id == updatedExpense.id, updatedExpense);
+        updatedExpense.currency = req.currency;
+        updatedExpense.title = req.title;
+        updatedExpense.description = req.description;
+        updatedExpense.amount = req.amount;
+        var update = Builders<FixedExpenses>.Update.Set(x => x.title, req.title).Set(x => x.amount, req.amount);
+        if (!string.IsNullOrEmpty(req.description ?? ""))
+        {
+            update = update.Set(x => x.description, req.description);
+        }
+        await _fixedExpensesCollection.UpdateOneAsync(x => x.id == existingExpense.id, update, new UpdateOptions { IsUpsert = false });
 
         return Ok(new _updateFixedExpensesRes { message = "Sabit gider kaydı başarıyla güncellendi." });
     }
@@ -220,4 +226,3 @@ public class FixedExpensesController : ControllerBase
 
     #endregion
 }
-   

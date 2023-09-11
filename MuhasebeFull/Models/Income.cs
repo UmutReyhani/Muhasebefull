@@ -17,6 +17,8 @@ namespace MuhasebeFull.Models
 
         public string description { get; set; }
 
+        public DateTime date { get; set; }
+
         public string userId { get; set; }
     }
 }
