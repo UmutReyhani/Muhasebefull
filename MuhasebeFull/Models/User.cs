@@ -20,7 +20,7 @@ namespace MuhasebeFull.Models
 
         public DateTime? lastLogin { get; set; }
 
-        public List<string> Restrictions { get; set; } = new List<string> { "FixedExpenses.Add" };
+        public List<string> Restrictions { get; set; } = new List<string>();
 
         public string role { get; set; }
     }

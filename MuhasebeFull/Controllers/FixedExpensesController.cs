@@ -230,7 +230,6 @@ public class FixedExpensesController : ControllerBase
     public ActionResult<_addFixedExpensesRes> AddFixedExpenses([FromBody] _addFixedExpensesReq expensesReq)
     {
         var _fixedExpensesCollection = _connectionService.db().GetCollection<FixedExpenses>("FixedExpensesCollection");
-        var _accountingCollection = _connectionService.db().GetCollection<Accounting>("AccountingCollection");
         var currentUser = userFunctions.GetCurrentUserFromSession(HttpContext);
 
         if (currentUser.Restrictions != null && currentUser.Restrictions.Contains("FixedExpenses.Add"))
